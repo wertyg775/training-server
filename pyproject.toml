@@ -7,14 +7,18 @@ name = "training-server"
 version = "0.1.0"
 description = "Container execution for a homelab training service"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "django>=5.2,<5.3",
+    "django-ninja>=1.4,<2",
+]
 
 [project.scripts]
 train-submit = "training_server.cli:submit_main"
 gpu-runner = "training_server.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["training_server*", "backend*"]
 
 [dependency-groups]
 dev = [

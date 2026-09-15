@@ -1,0 +1,29 @@
+"""Local development settings for the training backend."""
+
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-training-server")
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+ALLOWED_HOSTS = os.environ.get(
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]"
+).split(",")
+INSTALLED_APPS = ["backend.apps.BackendConfig"]
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+]
+ROOT_URLCONF = "backend.config.urls"
+WSGI_APPLICATION = "backend.config.wsgi.application"
+ASGI_APPLICATION = "backend.config.asgi.application"
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": os.environ.get("TRAINING_DATABASE", str(BASE_DIR / "db.sqlite3")),
+    }
+}
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+USE_TZ = True
+TIME_ZONE = "UTC"

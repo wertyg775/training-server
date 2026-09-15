@@ -5,3 +5,11 @@ __pycache__/
 build/
 dist/
 .jobs/
+
+# Local Django runtime and tooling
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+.ruff_cache/
+.env

@@ -73,3 +73,29 @@ On-host acceptance: build the image, submit the smoke training, wait for exit ze
 inspect logs and verify both output files. Also submit with `-- python -c 'raise
 SystemExit(7)'` and confirm exit code 7 is retained. Test `stop` with a long job.
 GPU execution and host prerequisites must be validated separately from unit tests.
+
+## Django backend scaffold
+
+`backend/` is the installed Django app:
+
+- `models.py`: future Job models.
+- `config/`: settings, URL configuration, ASGI and WSGI entry points.
+- `api/api.py`: API assembly using Django Ninja.
+- `api/routers/`: endpoint routers, currently application health only.
+- `management/commands/`: Django's standard custom command package. The future
+  `runworker.py` defines `Command(BaseCommand)` with a `handle()` method.
+- `migrations/`: model migrations.
+
+```bash
+uv sync
+uv run python manage.py check
+uv run python manage.py test backend
+uv run python manage.py runserver 127.0.0.1:8000
+```
+
+Visit `/api/health` for liveness and `/api/docs` for OpenAPI documentation.
+This scaffold has no Job model, submission endpoint, authentication or polling
+worker yet. Existing CLI commands still invoke Docker locally. Use the backend
+on localhost while those pieces are developed. Deployment must supply
+`DJANGO_SECRET_KEY` and appropriate `DJANGO_ALLOWED_HOSTS`; settings also accept
+`TRAINING_DATABASE` and `DJANGO_DEBUG` (default off).
