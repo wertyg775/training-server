@@ -15,3 +15,8 @@ gpu-runner = "training_server.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+]
