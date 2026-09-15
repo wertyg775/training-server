@@ -1,20 +1,23 @@
 """Small Docker adapter shared by the CLI and a future Django worker."""
+
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 LABEL = "training-server.managed"
 
 
 class DockerExecutor:
     def _run(self, *args):
-        return subprocess.run(["docker", *args], check=True, capture_output=True,
-                              text=True, timeout=60).stdout.strip()
+        return subprocess.run(
+            ["docker", *args], check=True, capture_output=True, text=True, timeout=60
+        ).stdout.strip()
 
-    def create(self, job_id: str, image: str, output: Path,
-               command: list[str], gpu: str = "0") -> str:
+    def create(
+        self, job_id: str, image: str, output: Path, command: list[str], gpu: str = "0"
+    ) -> str:
         if not re.fullmatch(r"job-[a-f0-9]{32}", job_id):
             raise ValueError("Invalid job ID")
         if not image or image.startswith("-"):
@@ -25,12 +28,32 @@ class DockerExecutor:
         if not output.is_dir() or "," in str(output):
             raise ValueError("Output must be a directory with no comma in its path")
         return self._run(
-            "create", "--name", job_id, "--label", LABEL + "=true",
-            "--gpus", "device=" + gpu, "--user", f"{os.getuid()}:{os.getgid()}",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--network", "none", "--shm-size", "1g",
-            "--env", "PYTHONUNBUFFERED=1", "--env", "GPU_JOB_OUTPUT_DIR=/output",
-            "--mount", f"type=bind,src={output},dst=/output", image, *command)
+            "create",
+            "--name",
+            job_id,
+            "--label",
+            LABEL + "=true",
+            "--gpus",
+            "device=" + gpu,
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--network",
+            "none",
+            "--shm-size",
+            "1g",
+            "--env",
+            "PYTHONUNBUFFERED=1",
+            "--env",
+            "GPU_JOB_OUTPUT_DIR=/output",
+            "--mount",
+            f"type=bind,src={output},dst=/output",
+            image,
+            *command,
+        )
 
     def inspect(self, container: str) -> dict:
         if not re.fullmatch(r"(?:[a-f0-9]{12,64}|job-[a-f0-9]{32})", container):

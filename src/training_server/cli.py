@@ -2,10 +2,10 @@
 
 import argparse
 import json
-from pathlib import Path
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 from .executor import DockerExecutor
 
@@ -15,7 +15,9 @@ def build_parser():
     commands = parser.add_subparsers(dest="action", required=True)
 
     submit = commands.add_parser("submit")
-    submit.add_argument("--image", required=True, help="Already built/pulled training image")
+    submit.add_argument(
+        "--image", required=True, help="Already built/pulled training image"
+    )
     submit.add_argument("--gpu", default="0")
     submit.add_argument(
         "--output-root",

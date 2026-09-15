@@ -10,7 +10,9 @@ from torch import nn
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=os.environ.get("GPU_JOB_OUTPUT_DIR"))
+    parser.add_argument(
+        "--output", type=Path, default=os.environ.get("GPU_JOB_OUTPUT_DIR")
+    )
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--pause", type=float, default=2.0)
     args = parser.parse_args()
@@ -25,8 +27,9 @@ def main():
     torch.set_num_threads(2)
     torch.manual_seed(42)
     device = torch.device("cuda:0")
-    print(f"device={torch.cuda.get_device_name(0)} torch={torch.__version__}",
-          flush=True)
+    print(
+        f"device={torch.cuda.get_device_name(0)} torch={torch.__version__}", flush=True
+    )
     generator = torch.Generator().manual_seed(42)
     features = torch.randn(4096, 64, generator=generator)
     teacher = torch.randn(64, 4, generator=generator)
@@ -41,7 +44,7 @@ def main():
         total_loss = 0.0
         for start in range(0, len(x), 128):
             optimizer.zero_grad(set_to_none=True)
-            loss = loss_fn(model(x[start:start + 128]), y[start:start + 128])
+            loss = loss_fn(model(x[start : start + 128]), y[start : start + 128])
             if not torch.isfinite(loss).item():
                 raise RuntimeError("Non-finite loss")
             loss.backward()
@@ -54,15 +57,21 @@ def main():
         print(json.dumps(metrics), flush=True)
         with (args.output / "metrics.jsonl").open("a") as handle:
             handle.write(json.dumps(metrics) + "\n")
-        checkpoint = {"epoch": epoch, "model": model.state_dict(),
-                      "optimizer": optimizer.state_dict(), "metrics": metrics}
+        checkpoint = {
+            "epoch": epoch,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "metrics": metrics,
+        }
         temporary = args.output / "checkpoint.pt.tmp"
         torch.save(checkpoint, temporary)
         temporary.replace(args.output / "checkpoint.pt")
         time.sleep(args.pause)
 
-    print(f"COMPLETED epochs={args.epochs} checkpoint={args.output / 'checkpoint.pt'}",
-          flush=True)
+    print(
+        f"COMPLETED epochs={args.epochs} checkpoint={args.output / 'checkpoint.pt'}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
