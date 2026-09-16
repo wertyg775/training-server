@@ -78,10 +78,11 @@ GPU execution and host prerequisites must be validated separately from unit test
 
 `backend/` is the installed Django app:
 
-- `models.py`: future Job models.
+- `models.py`: immutable projects, training jobs and container executions.
 - `config/`: settings, URL configuration, ASGI and WSGI entry points.
-- `api/api.py`: API assembly using Django Ninja.
-- `api/routers/`: endpoint routers, currently application health only.
+- `api/__init__.py`: API assembly using Django Ninja.
+- `api/routers/`: health and project import endpoints.
+- `services/`: project import and local storage handling.
 - `management/commands/`: Django's standard custom command package. The future
   `runworker.py` defines `Command(BaseCommand)` with a `handle()` method.
 - `migrations/`: model migrations.
@@ -89,13 +90,47 @@ GPU execution and host prerequisites must be validated separately from unit test
 ```bash
 uv sync
 uv run python manage.py check
+uv run python manage.py migrate
 uv run python manage.py test backend
 uv run python manage.py runserver 127.0.0.1:8000
 ```
 
 Visit `/api/health` for liveness and `/api/docs` for OpenAPI documentation.
-This scaffold has no Job model, submission endpoint, authentication or polling
+This scaffold has no training submission endpoint, authentication or polling
 worker yet. Existing CLI commands still invoke Docker locally. Use the backend
 on localhost while those pieces are developed. Deployment must supply
 `DJANGO_SECRET_KEY` and appropriate `DJANGO_ALLOWED_HOSTS`; settings also accept
 `TRAINING_DATABASE` and `DJANGO_DEBUG` (default off).
+
+## Project imports
+
+Requires Git on the backend host. Imports run synchronously and return a project
+ID, status and resolved commit. The project remains a single immutable snapshot.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/projects/upload \
+  -F 'name=My project' -F 'file=@source.zip'
+curl -X POST http://127.0.0.1:8000/api/projects/git \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"My project","repository_url":"https://github.com/owner/repo.git"}'
+```
+
+ZIP uploads preserve relative paths (zip the folder contents to avoid a wrapper
+directory). Supplied `.git` metadata is discarded and the uploaded files are
+committed into a new repository, including files matched by `.gitignore`.
+Unsafe archive paths and symlinks are rejected. Default limits are 100 MiB for
+uploads, 500 MiB extracted and 10,000 archive entries, configurable in settings.
+Git imports clone the default branch of an HTTPS repository without credentials;
+private repository authentication, submodules and Git LFS fetching are not supported.
+Git commands have a configurable 120-second timeout.
+
+Storage defaults to `project/<project-id>/`. Set the `PROJECT_STORAGE_ROOT`
+environment variable to change the local root. Settings read the process
+environment; automatic `.env` loading and blob storage are future work.
+Failed imports return HTTP 400 with a failed project record and remove partial
+repository files. Invalid request fields return HTTP 422; successful imports return
+HTTP 201. File selection and container launch are separate future endpoints.
+
+Migration `0002` brings the existing models into the database. It refuses to
+convert pre-existing image-based jobs automatically, because they have no Git
+snapshot to reference; those require an explicit migration or archival first.
