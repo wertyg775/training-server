@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+LOCAL_DB_PATH = BASE_DIR / "data" / "db.sqlite3"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-training-server")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = os.environ.get(
@@ -21,7 +22,7 @@ ASGI_APPLICATION = "backend.config.asgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.environ.get("TRAINING_DATABASE", str(BASE_DIR / "db.sqlite3")),
+        "NAME": os.environ.get("TRAINING_DATABASE", str(LOCAL_DB_PATH)),
     }
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
