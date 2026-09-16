@@ -11,7 +11,7 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from backend.models import Project
-from backend.services.projects import list_ready_projects
+from backend.services.projects import list_project_files, list_ready_projects
 
 
 class HealthTests(SimpleTestCase):
@@ -66,6 +66,54 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_directory_listing_uses_snapshot_and_preserves_names(self):
+        self.upload({"z/train.py": "pass", "a.py": "pass", "z/tab\tfile.py": "pass"})
+        project = Project.objects.get()
+        (Path(project.storage_path) / "untracked.py").write_text("pass")
+        (Path(project.storage_path) / "a.py").unlink()
+        self.assertEqual(
+            list_project_files(project.pk),
+            {
+                "path": "",
+                "entries": [
+                    {"name": "z", "path": "z", "type": "directory"},
+                    {"name": "a.py", "path": "a.py", "type": "file"},
+                ],
+            },
+        )
+        self.assertEqual(
+            list_project_files(project.pk, "z/"),
+            {
+                "path": "z",
+                "entries": [
+                    {"name": "tab\tfile.py", "path": "z/tab\tfile.py", "type": "file"},
+                    {"name": "train.py", "path": "z/train.py", "type": "file"},
+                ],
+            },
+        )
+        for path in [
+            "../",
+            "/etc",
+            "z/../../etc",
+            "z\\file",
+            "\0",
+            "missing",
+            "a.py",
+            ".git",
+        ]:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                list_project_files(project.pk, path)
+
+    def test_directory_listing_requires_ready_project(self):
+        project = Project.objects.create(
+            name="Pending", source_type=Project.SourceType.UPLOAD
+        )
+        with self.assertRaisesMessage(ValueError, "not ready"):
+            list_project_files(project.pk)
+        project.delete()
+        with self.assertRaises(Project.DoesNotExist):
+            list_project_files("00000000-0000-0000-0000-000000000000")
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

@@ -25,12 +25,74 @@ def list_ready_projects():
     return list_projects().filter(status=Project.Status.READY)
 
 
+def _tree_entries(project, tree):
+    output = _git(project.storage_path, "ls-tree", "-z", tree)
+    entries = []
+    for record in output.split("\0"):
+        if not record:
+            continue
+        metadata, name = record.split("\t", 1)
+        mode, kind, object_id = metadata.split()
+        entry_type = (
+            "directory"
+            if kind == "tree"
+            else "submodule"
+            if kind == "commit"
+            else "symlink"
+            if mode == "120000"
+            else "file"
+        )
+        entries.append((name, entry_type, object_id))
+    return entries
+
+
+def list_project_files(project_id, path=""):
+    """List one committed directory, without following symlinks or submodules.
+
+    An empty path selects the root. Missing projects raise Project.DoesNotExist;
+    invalid paths, unavailable snapshots and non-directory paths raise ValueError.
+    Only relative paths are returned, never server storage locations.
+    """
+    project = Project.objects.get(pk=project_id)
+    if project.status != Project.Status.READY:
+        raise ValueError("Project is not ready.")
+    if not project.storage_path or not project.resolved_commit:
+        raise ValueError("Project snapshot is unavailable.")
+    if (
+        not isinstance(path, str)
+        or PurePosixPath(path).is_absolute()
+        or ".." in PurePosixPath(path).parts
+        or "\\" in path
+        or "\0" in path
+    ):
+        raise ValueError("Select a relative directory within the project.")
+    parts = PurePosixPath(path).parts
+    tree = f"{project.resolved_commit}^{{tree}}"
+    for part in parts:
+        match = next(
+            (entry for entry in _tree_entries(project, tree) if entry[0] == part),
+            None,
+        )
+        if match is None:
+            raise ValueError("Directory does not exist in the project snapshot.")
+        if match[1] != "directory":
+            raise ValueError("Selected path is not a directory.")
+        tree = match[2]
+    entries = [
+        {"name": name, "path": "/".join((*parts, name)), "type": kind}
+        for name, kind, _ in _tree_entries(project, tree)
+    ]
+    entries.sort(key=lambda entry: (entry["type"] != "directory", entry["name"]))
+    return {"path": "/".join(parts), "entries": entries}
+
+
 class ImportFailure(Exception):
     def __init__(self, project):
         self.project = project
         super().__init__(project.error)
 
 
+# Executes git commands
 def _git(directory, *arguments):
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
