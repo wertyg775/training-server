@@ -20,6 +20,11 @@ def list_projects():
     return Project.objects.order_by("-created_at", "-id")
 
 
+def list_ready_projects():
+    """Return ready projects from either import source, newest first."""
+    return list_projects().filter(status=Project.Status.READY)
+
+
 class ImportFailure(Exception):
     def __init__(self, project):
         self.project = project

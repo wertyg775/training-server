@@ -11,6 +11,7 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from backend.models import Project
+from backend.services.projects import list_ready_projects
 
 
 class HealthTests(SimpleTestCase):
@@ -21,6 +22,24 @@ class HealthTests(SimpleTestCase):
 
 
 class ProjectListTests(TestCase):
+    def test_ready_projects_excludes_other_statuses_and_orders_newest_first(self):
+        oldest = Project.objects.create(
+            name="Old", source_type=Project.SourceType.GIT, status=Project.Status.READY
+        )
+        newest = Project.objects.create(
+            name="New",
+            source_type=Project.SourceType.UPLOAD,
+            status=Project.Status.READY,
+        )
+        Project.objects.filter(pk=oldest.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+        for status in [Project.Status.IMPORTING, Project.Status.FAILED]:
+            Project.objects.create(
+                name=status, source_type=Project.SourceType.UPLOAD, status=status
+            )
+        self.assertEqual(list(list_ready_projects()), [newest, oldest])
+
     def test_empty_list(self):
         response = self.client.get("/api/projects")
         self.assertEqual(response.status_code, 200)
