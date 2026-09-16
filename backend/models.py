@@ -2,6 +2,7 @@
 
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -9,7 +10,12 @@ class TrainingJob(models.Model):
     """What the user requested, independent of any execution attempt."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    image = models.CharField(max_length=512)
+    repository_url = models.URLField(max_length=2048, blank=True)
+    revision = models.CharField(max_length=255, blank=True)
+    project_archive = models.FileField(
+        upload_to="training-projects/%Y/%m/%d/", blank=True
+    )
+    config_path = models.CharField(max_length=1024, blank=True)
     command = models.JSONField(default=list, blank=True)
     requested_gpu = models.CharField(max_length=128, default="0")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -17,6 +23,15 @@ class TrainingJob(models.Model):
 
     class Meta:
         ordering = ["created_at", "id"]
+
+    def clean(self):
+        super().clean()
+        if bool(self.repository_url) == bool(self.project_archive):
+            raise ValidationError(
+                "Provide either a Git repository URL or a project archive, not both."
+            )
+        if self.revision and not self.repository_url:
+            raise ValidationError({"revision": "A revision requires a Git repository."})
 
 
 class ContainerExecution(models.Model):
