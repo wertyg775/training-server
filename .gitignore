@@ -13,3 +13,4 @@ dist/
 *.sqlite3-shm
 .ruff_cache/
 .env
+/project/
