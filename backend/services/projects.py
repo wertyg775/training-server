@@ -15,6 +15,11 @@ from django.core.exceptions import ValidationError
 from backend.models import Project
 
 
+def list_projects():
+    """Return all imported projects, newest first, with stable ordering for ties."""
+    return Project.objects.order_by("-created_at", "-id")
+
+
 class ImportFailure(Exception):
     def __init__(self, project):
         self.project = project

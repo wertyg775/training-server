@@ -1,10 +1,11 @@
+from datetime import datetime
 from uuid import UUID
 
 from ninja import File, Form, Router, Schema
 from ninja.files import UploadedFile
 from pydantic import Field
 
-from backend.services.projects import ImportFailure, import_project
+from backend.services.projects import ImportFailure, import_project, list_projects
 
 router = Router(tags=["projects"])
 
@@ -16,6 +17,7 @@ class ProjectResponse(Schema):
     status: str
     resolved_commit: str
     error: str
+    created_at: datetime
 
 
 class ErrorResponse(Schema):
@@ -25,6 +27,12 @@ class ErrorResponse(Schema):
 class GitImport(Schema):
     name: str = Field(min_length=1, max_length=255)
     repository_url: str = Field(min_length=1, max_length=2048)
+
+
+@router.get("", response=list[ProjectResponse])
+def get_projects(request):
+    """List all projects from ZIP uploads and Git imports, newest first."""
+    return list_projects()
 
 
 def _import(**kwargs):

@@ -2,11 +2,13 @@ import io
 import subprocess
 import tempfile
 import zipfile
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
 from backend.models import Project
 
@@ -16,6 +18,32 @@ class HealthTests(SimpleTestCase):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class ProjectListTests(TestCase):
+    def test_empty_list(self):
+        response = self.client.get("/api/projects")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_lists_all_projects_by_creation_time_descending(self):
+        newest = Project.objects.create(
+            name="Newest", source_type=Project.SourceType.UPLOAD
+        )
+        oldest = Project.objects.create(
+            name="Oldest", source_type=Project.SourceType.GIT
+        )
+        Project.objects.filter(pk=oldest.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+        response = self.client.get("/api/projects")
+        self.assertEqual(response.status_code, 200)
+        projects = response.json()
+        self.assertEqual(
+            [project["id"] for project in projects], [str(newest.pk), str(oldest.pk)]
+        )
+        self.assertIn("created_at", projects[0])
+        self.assertNotIn("storage_path", projects[0])
 
 
 class ProjectImportTests(TestCase):
