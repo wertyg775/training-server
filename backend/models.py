@@ -1,22 +1,76 @@
-"""Training requests and their individual container execution attempts."""
+"""Imported project snapshots, training requests and execution attempts."""
 
 import uuid
+from pathlib import PurePosixPath
 
 from django.core.exceptions import ValidationError
 from django.db import models
 
 
-class TrainingJob(models.Model):
-    """What the user requested, independent of any execution attempt."""
+class Project(models.Model):
+    """One fixed import of project files; updated code requires a new import.
+
+    Import preparation populates storage_path and resolved_commit before marking
+    the project ready. Ready project contents must not be modified in place.
+    """
+
+    class SourceType(models.TextChoices):
+        GIT = "git", "Git repository"
+        UPLOAD = "upload", "Uploaded folder"
+
+    class Status(models.TextChoices):
+        IMPORTING = "importing", "Importing"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    source_type = models.CharField(max_length=16, choices=SourceType.choices)
     repository_url = models.URLField(max_length=2048, blank=True)
-    revision = models.CharField(max_length=255, blank=True)
-    project_archive = models.FileField(
-        upload_to="training-projects/%Y/%m/%d/", blank=True
+    requested_revision = models.CharField(max_length=255, blank=True)
+    resolved_commit = models.CharField(max_length=64, blank=True)
+    storage_path = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.IMPORTING
     )
-    config_path = models.CharField(max_length=1024, blank=True)
-    command = models.JSONField(default=list, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def clean(self):
+        super().clean()
+        if self.source_type == self.SourceType.GIT and not self.repository_url:
+            raise ValidationError(
+                {"repository_url": "Git imports require a repository URL."}
+            )
+        if self.source_type == self.SourceType.UPLOAD and (
+            self.repository_url or self.requested_revision or self.resolved_commit
+        ):
+            raise ValidationError("Uploaded projects cannot have Git source metadata.")
+        if self.status == self.Status.READY:
+            if not self.storage_path:
+                raise ValidationError(
+                    {"storage_path": "Ready projects require stored files."}
+                )
+            if self.source_type == self.SourceType.GIT and not self.resolved_commit:
+                raise ValidationError(
+                    {"resolved_commit": "Ready Git imports require a commit."}
+                )
+
+
+class TrainingJob(models.Model):
+    """A request to run a Python entry point from an imported project snapshot."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.PROTECT,
+        related_name="training_jobs",
+    )
+    entrypoint = models.CharField(max_length=1024)
+    arguments = models.JSONField(default=list, blank=True)
     requested_gpu = models.CharField(max_length=128, default="0")
     created_at = models.DateTimeField(auto_now_add=True)
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
@@ -26,12 +80,25 @@ class TrainingJob(models.Model):
 
     def clean(self):
         super().clean()
-        if bool(self.repository_url) == bool(self.project_archive):
+        path = PurePosixPath(self.entrypoint)
+        if (
+            not self.entrypoint
+            or path.is_absolute()
+            or ".." in path.parts
+            or "\\" in self.entrypoint
+            or "\0" in self.entrypoint
+            or path.suffix != ".py"
+        ):
             raise ValidationError(
-                "Provide either a Git repository URL or a project archive, not both."
+                {"entrypoint": "Select a relative Python file within the project."}
             )
-        if self.revision and not self.repository_url:
-            raise ValidationError({"revision": "A revision requires a Git repository."})
+        if not isinstance(self.arguments, list) or any(
+            not isinstance(argument, str) or "\0" in argument
+            for argument in self.arguments
+        ):
+            raise ValidationError(
+                {"arguments": "Arguments must be a list of strings without null bytes."}
+            )
 
 
 class ContainerExecution(models.Model):
