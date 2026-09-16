@@ -8,10 +8,12 @@ from django.db import models
 
 
 class Project(models.Model):
-    """One fixed import of project files; updated code requires a new import.
+    """One fixed Git snapshot; updated code requires a new import.
 
+    Both remote imports and uploads become self-contained Git repositories.
     Import preparation populates storage_path and resolved_commit before marking
     the project ready. Ready project contents must not be modified in place.
+    The importer must verify the repository and commit exist at storage_path.
     """
 
     class SourceType(models.TextChoices):
@@ -28,8 +30,15 @@ class Project(models.Model):
     source_type = models.CharField(max_length=16, choices=SourceType.choices)
     repository_url = models.URLField(max_length=2048, blank=True)
     requested_revision = models.CharField(max_length=255, blank=True)
-    resolved_commit = models.CharField(max_length=64, blank=True)
-    storage_path = models.TextField(blank=True)
+    resolved_commit = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="Exact Git commit for either import source.",
+    )
+    storage_path = models.TextField(
+        blank=True,
+        help_text="Server-managed path to the self-contained Git repository.",
+    )
     status = models.CharField(
         max_length=16, choices=Status.choices, default=Status.IMPORTING
     )
@@ -45,18 +54,14 @@ class Project(models.Model):
             raise ValidationError(
                 {"repository_url": "Git imports require a repository URL."}
             )
-        if self.source_type == self.SourceType.UPLOAD and (
-            self.repository_url or self.requested_revision or self.resolved_commit
-        ):
-            raise ValidationError("Uploaded projects cannot have Git source metadata.")
         if self.status == self.Status.READY:
             if not self.storage_path:
                 raise ValidationError(
-                    {"storage_path": "Ready projects require stored files."}
+                    {"storage_path": "Ready projects require a stored Git repository."}
                 )
-            if self.source_type == self.SourceType.GIT and not self.resolved_commit:
+            if not self.resolved_commit:
                 raise ValidationError(
-                    {"resolved_commit": "Ready Git imports require a commit."}
+                    {"resolved_commit": "Ready projects require a Git commit."}
                 )
 
 
