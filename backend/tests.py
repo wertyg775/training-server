@@ -39,9 +39,20 @@ class ProjectListTests(TestCase):
                 name=status, source_type=Project.SourceType.UPLOAD, status=status
             )
         self.assertEqual(list(list_ready_projects()), [newest, oldest])
+        response = self.client.get("/api/projects/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in response.json()], [str(newest.pk), str(oldest.pk)]
+        )
+        response = self.client.get("/api/projects")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()), 4)
 
     def test_empty_list(self):
         response = self.client.get("/api/projects")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        response = self.client.get("/api/projects/ready")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), [])
 
@@ -66,6 +77,46 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_directory_api(self):
+        self.upload({"src/train.py": "pass", "README.md": "Example"})
+        project = Project.objects.get()
+        url = f"/api/projects/{project.pk}/files"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "path": "",
+                "entries": [
+                    {"name": "src", "path": "src", "type": "directory"},
+                    {"name": "README.md", "path": "README.md", "type": "file"},
+                ],
+            },
+        )
+        response = self.client.get(url, {"path": "src"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "path": "src",
+                "entries": [
+                    {"name": "train.py", "path": "src/train.py", "type": "file"},
+                ],
+            },
+        )
+        for path in ["../", "/etc", "missing", "README.md"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(url, {"path": path}).status_code, 400)
+        for status in [Project.Status.IMPORTING, Project.Status.FAILED]:
+            Project.objects.filter(pk=project.pk).update(status=status)
+            with self.subTest(status=status):
+                self.assertEqual(self.client.get(url).status_code, 409)
+        project.delete()
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(
+            self.client.get("/api/projects/invalid/files").status_code, 422
+        )
+
     def test_directory_listing_uses_snapshot_and_preserves_names(self):
         self.upload({"z/train.py": "pass", "a.py": "pass", "z/tab\tfile.py": "pass"})
         project = Project.objects.get()

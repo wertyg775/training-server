@@ -25,6 +25,10 @@ def list_ready_projects():
     return list_projects().filter(status=Project.Status.READY)
 
 
+class ProjectNotReady(ValueError):
+    """The project cannot be browsed until its import is ready."""
+
+
 def _tree_entries(project, tree):
     output = _git(project.storage_path, "ls-tree", "-z", tree)
     entries = []
@@ -55,7 +59,7 @@ def list_project_files(project_id, path=""):
     """
     project = Project.objects.get(pk=project_id)
     if project.status != Project.Status.READY:
-        raise ValueError("Project is not ready.")
+        raise ProjectNotReady("Project is not ready.")
     if not project.storage_path or not project.resolved_commit:
         raise ValueError("Project snapshot is unavailable.")
     if (

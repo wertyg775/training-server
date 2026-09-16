@@ -129,7 +129,20 @@ environment variable to change the local root. Settings read the process
 environment; automatic `.env` loading and blob storage are future work.
 Failed imports return HTTP 400 with a failed project record and remove partial
 repository files. Invalid request fields return HTTP 422; successful imports return
-HTTP 201. File selection and container launch are separate future endpoints.
+HTTP 201. Container launch is a separate future endpoint.
+
+`GET /api/projects` lists every project; `GET /api/projects/ready` lists only ready
+projects. Both include ZIP and Git imports and sort newest first. These provide
+separate views for future management and dashboard pages, but do not add roles
+or access control.
+
+`GET /api/projects/<project-id>/files` lists the committed root directory.
+Pass `?path=src` to list a subdirectory. The response contains `path` and an
+`entries` array with `name`, project-relative `path`, and `type` (directory,
+file, symlink or submodule). Directories sort first, then entries sort by name.
+Only ready projects can be browsed: other statuses return HTTP 409, missing
+projects return 404, and invalid directory paths return 400. Symlinks and
+submodules are listed but cannot be expanded.
 
 Migration `0002` brings the existing models into the database. It refuses to
 convert pre-existing image-based jobs automatically, because they have no Git
