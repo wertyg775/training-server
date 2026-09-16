@@ -103,6 +103,7 @@ def _extract(upload, destination):
 
 def import_project(*, name, upload=None, repository_url=""):
     """Create a ready snapshot, or retain a failed import with its error."""
+    ## Check for upload and validate url
     if (upload is None) == (not repository_url):
         raise ValueError("Provide exactly one ZIP file or repository URL.")
     if repository_url:
