@@ -98,6 +98,7 @@ class ImportFailure(Exception):
 
 # Executes git commands
 def _git(directory, *arguments):
+    """Run a git command from spawned child process"""
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
     }
