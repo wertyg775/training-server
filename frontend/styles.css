@@ -97,7 +97,7 @@ body {
   border: 1px solid #999999;
   border-radius: 6px;
   color: #ffffff;
-  font-size: 0.925rem;
+  font-size: 1.02rem;
 }
 
 .dashboard h1 {
@@ -116,7 +116,7 @@ body {
 .projects-table th,
 .projects-table td {
   text-align: left;
-  padding: 12px 8px;
+  padding: 18px 8px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
@@ -150,8 +150,34 @@ body {
 }
 
 .projects-table input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
   margin: 0;
-  accent-color: #000000;
+  border: 2px solid #e0e0e0;
+  border-radius: 3px;
+  background: #ffffff;
+  vertical-align: middle;
+  display: inline-grid;
+  place-content: center;
+}
+
+.projects-table input[type="checkbox"]:checked {
+  background: #000000;
+}
+
+.projects-table input[type="checkbox"]:checked::before {
+  content: "";
+  width: 4px;
+  height: 7px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.projects-table input[type="checkbox"]:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 3px;
 }
 
 .projects-table td.repo {
