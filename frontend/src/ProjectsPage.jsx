@@ -117,6 +117,14 @@ export default function ProjectsPage() {
         }}>
           <section className="upload-modal" role="dialog" aria-modal="true" aria-label="Upload files">
             <button className="modal-close" type="button" aria-label="Close upload dialog" onClick={() => setIsUploadModalOpen(false)}>×</button>
+            <label className="modal-label" htmlFor="github-url">Github URL</label>
+            <input id="github-url" className="project-search modal-search" type="search" aria-label="Github URL" placeholder="Enter link" />
+            <div className="modal-or" aria-hidden="true">Or</div>
+            <div className="upload-dropzone">
+              <span className="upload-dropzone-icon" aria-hidden="true">↑</span>
+              <span>Upload or drag ZIP</span>
+            </div>
+            <button className="modal-confirm" type="button">Confirm</button>
           </section>
         </div>
       )}
