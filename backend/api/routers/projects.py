@@ -23,6 +23,8 @@ class ProjectResponse(Schema):
     id: UUID
     name: str
     source_type: str
+    repository_url: str
+    requested_revision: str
     status: str
     resolved_commit: str
     error: str

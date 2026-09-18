@@ -24,7 +24,11 @@ class HealthTests(SimpleTestCase):
 class ProjectListTests(TestCase):
     def test_ready_projects_excludes_other_statuses_and_orders_newest_first(self):
         oldest = Project.objects.create(
-            name="Old", source_type=Project.SourceType.GIT, status=Project.Status.READY
+            name="Old",
+            source_type=Project.SourceType.GIT,
+            status=Project.Status.READY,
+            repository_url="https://github.com/example/project.git",
+            requested_revision="main",
         )
         newest = Project.objects.create(
             name="New",
@@ -41,6 +45,8 @@ class ProjectListTests(TestCase):
         self.assertEqual(list(list_ready_projects()), [newest, oldest])
         response = self.client.get("/api/projects/ready")
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[1]["repository_url"], oldest.repository_url)
+        self.assertEqual(response.json()[1]["requested_revision"], "main")
         self.assertEqual(
             [item["id"] for item in response.json()], [str(newest.pk), str(oldest.pk)]
         )
