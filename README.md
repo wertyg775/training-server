@@ -102,7 +102,23 @@ on localhost while those pieces are developed. Deployment must supply
 `DJANGO_SECRET_KEY` and appropriate `DJANGO_ALLOWED_HOSTS`; settings also accept
 `TRAINING_DATABASE` and `DJANGO_DEBUG` (default off).
 
-## Project imports
+## Frontend development
+
+With Django running on `127.0.0.1:8000`, start the React dashboard:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite proxies `/api` requests to Django. `npm run build` produces `frontend/dist`;
+production hosting must route `/api` to Django. Run API client tests with `npm test`.
+The Projects page lists only ready projects, with search and selection. The upload
+API helper is available in `src/api.js`; Upload Files remains intentionally unwired.
+Revision displays `-` when absent; Actions displays `-` until actions are available.
+
+## Project import API
 
 Requires Git on the backend host. Imports run synchronously and return a project
 ID, status and resolved commit. The project remains a single immutable snapshot.
