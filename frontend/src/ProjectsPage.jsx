@@ -38,6 +38,7 @@ export default function ProjectsPage() {
 
   const visible = projects.filter((project) =>
     project.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const showEmptyState = !loading && !error && visible.length === 0 && !query.trim();
   const allSelected = visible.length > 0 && visible.every((project) => selected.has(project.id));
   const someSelected = visible.some((project) => selected.has(project.id));
 
@@ -68,21 +69,32 @@ export default function ProjectsPage() {
       <div className="layout">
         <aside className="sidebar">
           <nav className="nav" aria-label="Main">
-            <a className="nav-item active" href="#" aria-current="page">Projects</a>
-            <a className="nav-item" href="#">Training Jobs</a>
-            <a className="nav-item" href="#">Executions</a>
-            <a className="nav-item" href="#">Settings</a>
+            <a className="nav-item active" href="#" aria-current="page"><span className="nav-icon" aria-hidden="true">▣</span>Projects</a>
+            <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">◉</span>Training Jobs</a>
+            <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">▶</span>Executions</a>
+            <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</a>
           </nav>
         </aside>
         <div className="content">
           <main className="dashboard">
             <div className="page-head">
               <h1>Projects</h1>
-              <button className="upload-button" type="button" onClick={() => setIsUploadModalOpen(true)}><span className="plus-icon" aria-hidden="true">+</span> Upload Files</button>
+              <button className={`upload-button${showEmptyState ? ' upload-button-muted' : ''}`} type="button" onClick={() => setIsUploadModalOpen(true)}><span className="plus-icon" aria-hidden="true">+</span> Upload Files</button>
             </div>
             <section aria-label="Ready projects" aria-busy={loading}>
-              <input className="project-search" type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <table className="projects-table">
+              {!showEmptyState && <input className="project-search" type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} />}
+              {showEmptyState ? (
+                <div className="projects-empty-state" role="status">
+                  <div className="empty-state-content">
+                    <svg className="empty-folder-icon" viewBox="0 0 64 52" aria-hidden="true">
+                      <path d="M3 11.5A5.5 5.5 0 0 1 8.5 6h17l5 6h25A5.5 5.5 0 0 1 61 17.5v25a5.5 5.5 0 0 1-5.5 5.5h-47A5.5 5.5 0 0 1 3 42.5v-31Z" />
+                    </svg>
+                    <h2>No projects yet</h2>
+                    <p>Upload your training files or scripts to begin.</p>
+                    <button className="empty-upload-button" type="button" onClick={() => setIsUploadModalOpen(true)}>Upload Files</button>
+                  </div>
+                </div>
+              ) : <table className="projects-table">
                 <thead>
                   <tr>
                     <th className="col-check"><input ref={selectAll} type="checkbox" aria-label="Select all projects" checked={allSelected} disabled={!visible.length} onChange={(event) => toggleSelection(visible.map((project) => project.id), event.target.checked)} /></th>
@@ -106,7 +118,7 @@ export default function ProjectsPage() {
                           </tr>
                         ))}
                 </tbody>
-              </table>
+              </table>}
             </section>
           </main>
         </div>
