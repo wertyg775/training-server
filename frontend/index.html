@@ -4,78 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Training Server Dashboard</title>
-    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="brand">Training Server</header>
-    <div class="layout">
-      <aside class="sidebar">
-        <nav class="nav" aria-label="Main">
-          <a class="nav-item active" href="#" aria-current="page">Projects</a>
-          <a class="nav-item" href="#">Training Jobs</a>
-          <a class="nav-item" href="#">Executions</a>
-          <a class="nav-item" href="#">Settings</a>
-        </nav>
-      </aside>
-
-      <div class="content">
-        <main class="dashboard">
-          <div class="page-head">
-            <h1>Projects</h1>
-            <button class="upload-button" type="button"><span class="plus-icon" aria-hidden="true">+</span> Upload Files</button>
-          </div>
-
-          <section aria-label="Ready projects">
-            <input class="project-search" type="search" aria-label="Search projects" placeholder="Search projects" />
-              <table class="projects-table">
-                <thead>
-                  <tr>
-                    <th class="col-check"><input type="checkbox" aria-label="Select all projects" /></th>
-                    <th>Name</th>
-                    <th>Source</th>
-                    <th>Repository</th>
-                    <th>Revision</th>
-                    <th>Commit</th>
-                    <th>Imported</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td><input type="checkbox" aria-label="Select mnist-classifier" /></td>
-                    <td class="name">mnist-classifier</td>
-                    <td>Upload</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>a1b2c3d</td>
-                    <td>2 hours ago</td>
-                    <td>2</td>
-                  </tr>
-                  <tr>
-                    <td><input type="checkbox" aria-label="Select transformer-playground" /></td>
-                    <td class="name">transformer-playground</td>
-                    <td>Git</td>
-                    <td class="repo">github.com/danish/transformer-playground</td>
-                    <td>main</td>
-                    <td>9f8e7d6</td>
-                    <td>19 hours ago</td>
-                    <td>1</td>
-                  </tr>
-                  <tr>
-                    <td><input type="checkbox" aria-label="Select cifar10-cnn" /></td>
-                    <td class="name">cifar10-cnn</td>
-                    <td>Upload</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>4c5b6a7</td>
-                    <td>24 hours ago</td>
-                    <td>0</td>
-                  </tr>
-                </tbody>
-              </table>
-          </section>
-        </main>
-      </div>
-    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
