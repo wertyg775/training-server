@@ -7,11 +7,32 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from backend.models import Project
 from backend.services.projects import list_project_files, list_ready_projects
+
+
+class SeedProjectsTests(TestCase):
+    def test_seeds_browsable_snapshots_and_skips_repeat_imports(self):
+        with tempfile.TemporaryDirectory() as storage:
+            with self.settings(PROJECT_STORAGE_ROOT=storage):
+                output = io.StringIO()
+                call_command("seed_projects", stdout=output)
+                project = Project.objects.get(name="Example: smoke-training")
+                project.full_clean()
+                self.assertEqual(project.status, Project.Status.READY)
+                files = list_project_files(project.pk)["entries"]
+                self.assertIn("train.py", [entry["name"] for entry in files])
+                self.assertIn("Dockerfile", [entry["name"] for entry in files])
+                original_ids = set(Project.objects.values_list("pk", flat=True))
+                call_command("seed_projects", stdout=output)
+                self.assertEqual(
+                    set(Project.objects.values_list("pk", flat=True)), original_ids
+                )
+                self.assertIn("already seeded", output.getvalue())
 
 
 class HealthTests(SimpleTestCase):
