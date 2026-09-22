@@ -9,6 +9,10 @@ from pathlib import Path
 LABEL = "training-server.managed"
 
 
+class ContainerNotFound(ValueError):
+    pass
+
+
 class DockerExecutor:
     def _run(self, *args):
         return subprocess.run(
@@ -16,7 +20,13 @@ class DockerExecutor:
         ).stdout.strip()
 
     def create(
-        self, job_id: str, image: str, output: Path, command: list[str], gpu: str = "0"
+        self,
+        job_id: str,
+        image: str,
+        output: Path,
+        command: list[str],
+        gpu: str = "0",
+        dataset: Path | None = None,
     ) -> str:
         if not re.fullmatch(r"job-[a-f0-9]{32}", job_id):
             raise ValueError("Invalid job ID")
@@ -27,6 +37,19 @@ class DockerExecutor:
         output = output.resolve(strict=True)
         if not output.is_dir() or "," in str(output):
             raise ValueError("Output must be a directory with no comma in its path")
+        dataset_args = []
+        if dataset is not None:
+            dataset = dataset.resolve(strict=True)
+            if not dataset.is_dir() or "," in str(dataset):
+                raise ValueError(
+                    "Dataset must be a directory with no comma in its path"
+                )
+            dataset_args = [
+                "--mount",
+                f"type=bind,src={dataset},dst=/dataset,readonly",
+                "--env",
+                "GPU_JOB_DATASET_DIR=/dataset",
+            ]
         return self._run(
             "create",
             "--name",
@@ -51,6 +74,7 @@ class DockerExecutor:
             "GPU_JOB_OUTPUT_DIR=/output",
             "--mount",
             f"type=bind,src={output},dst=/output",
+            *dataset_args,
             image,
             *command,
         )
@@ -58,7 +82,15 @@ class DockerExecutor:
     def inspect(self, container: str) -> dict:
         if not re.fullmatch(r"(?:[a-f0-9]{12,64}|job-[a-f0-9]{32})", container):
             raise ValueError("Supply a container ID or generated job name")
-        info = json.loads(self._run("inspect", container))[0]
+        try:
+            raw = self._run("inspect", container)
+        except subprocess.CalledProcessError as exc:
+            if "No such object:" in (exc.stderr or "") or "No such container:" in (
+                exc.stderr or ""
+            ):
+                raise ContainerNotFound("Training container no longer exists.") from exc
+            raise
+        info = json.loads(raw)[0]
         if info["Config"].get("Labels", {}).get(LABEL) != "true":
             raise ValueError("Container is not managed by training-server")
         return info
