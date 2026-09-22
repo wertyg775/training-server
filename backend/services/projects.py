@@ -90,6 +90,42 @@ def list_project_files(project_id, path=""):
     return {"path": "/".join(parts), "entries": entries}
 
 
+def read_project_file(project_id, path):
+    """Read a bounded UTF-8 file from the committed snapshot, never the worktree."""
+    # Validate the full path using the same rules as directory browsing.
+    if (
+        not path
+        or PurePosixPath(path).is_absolute()
+        or ".." in PurePosixPath(path).parts
+        or "\\" in path
+        or "\0" in path
+    ):
+        raise ValueError("Select a relative file within the project.")
+    relative = PurePosixPath(path)
+    parent = str(relative.parent)
+    listing = list_project_files(project_id, parent)
+    entry = next(
+        (item for item in listing["entries"] if item["name"] == relative.name), None
+    )
+    if entry is None or entry["type"] != "file":
+        raise ValueError("Select a regular file in the project snapshot.")
+    project = Project.objects.get(pk=project_id)
+    tree = f"{project.resolved_commit}:{listing['path']}"
+    object_id = next(
+        item[2] for item in _tree_entries(project, tree) if item[0] == relative.name
+    )
+    if int(_git(project.storage_path, "cat-file", "-s", object_id)) > 1024 * 1024:
+        raise ValueError("File is too large to preview (maximum 1 MiB).")
+    raw = _git(project.storage_path, "cat-file", "blob", object_id, raw=True)
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Only UTF-8 text files can be previewed.") from exc
+    if "\0" in content:
+        raise ValueError("Binary files cannot be previewed.")
+    return {"path": entry["path"], "content": content}
+
+
 class ImportFailure(Exception):
     def __init__(self, project):
         self.project = project
@@ -97,7 +133,7 @@ class ImportFailure(Exception):
 
 
 # Executes git commands
-def _git(directory, *arguments):
+def _git(directory, *arguments, raw=False):
     """Run a git command from spawned child process"""
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -109,7 +145,7 @@ def _git(directory, *arguments):
         GIT_ALLOW_PROTOCOL="https",
     )
     try:
-        return subprocess.run(
+        output = subprocess.run(
             [
                 "git",
                 "-c",
@@ -122,9 +158,10 @@ def _git(directory, *arguments):
             env=environment,
             check=True,
             capture_output=True,
-            text=True,
+            text=not raw,
             timeout=settings.PROJECT_GIT_TIMEOUT,
-        ).stdout.strip()
+        ).stdout
+        return output if raw else output.strip()
     except (subprocess.SubprocessError, OSError) as exc:
         raise ValueError(
             "Git import failed; check the repository URL and Git availability."

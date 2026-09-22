@@ -14,6 +14,7 @@ from backend.services.projects import (
     list_project_files,
     list_projects,
     list_ready_projects,
+    read_project_file,
 )
 
 router = Router(tags=["projects"])
@@ -46,6 +47,11 @@ class DirectoryResponse(Schema):
     entries: list[DirectoryEntry]
 
 
+class FileResponse(Schema):
+    path: str
+    content: str
+
+
 class GitImport(Schema):
     name: str = Field(min_length=1, max_length=255)
     repository_url: str = Field(min_length=1, max_length=2048)
@@ -76,6 +82,26 @@ def get_project_files(request, project_id: UUID, path: str = ""):
     """List a ready project's committed directory; omit path for the root."""
     try:
         return list_project_files(project_id, path)
+    except Project.DoesNotExist:
+        return 404, {"detail": "Project not found."}
+    except ProjectNotReady as exc:
+        return 409, {"detail": str(exc)}
+    except ValueError as exc:
+        return 400, {"detail": str(exc)}
+
+
+@router.get(
+    "/{project_id}/file",
+    response={
+        200: FileResponse,
+        400: ErrorResponse,
+        404: ErrorResponse,
+        409: ErrorResponse,
+    },
+)
+def get_project_file(request, project_id: UUID, path: str):
+    try:
+        return read_project_file(project_id, path)
     except Project.DoesNotExist:
         return 404, {"detail": "Project not found."}
     except ProjectNotReady as exc:

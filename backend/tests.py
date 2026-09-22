@@ -104,6 +104,65 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_file_preview_reads_snapshot_and_preserves_whitespace(self):
+        content = "  # café\r\nprint('<script>')\r\n\n"
+        self.upload({"src/my file.py": content, "empty.txt": ""})
+        project = Project.objects.get()
+        (Path(project.storage_path) / "src/my file.py").write_text("changed")
+        url = f"/api/projects/{project.pk}/file"
+        response = self.client.get(url, {"path": "src/my file.py"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(), {"path": "src/my file.py", "content": content}
+        )
+        self.assertEqual(
+            self.client.get(url, {"path": "empty.txt"}).json()["content"], ""
+        )
+        for path in [
+            "../secret",
+            "/etc/passwd",
+            "src/../../secret",
+            "src\\file",
+            "\0",
+            ".git/config",
+            "missing",
+            "src",
+            "",
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(url, {"path": path}).status_code, 400)
+        Project.objects.filter(pk=project.pk).update(status=Project.Status.FAILED)
+        self.assertEqual(self.client.get(url, {"path": "empty.txt"}).status_code, 409)
+        project.delete()
+        self.assertEqual(self.client.get(url, {"path": "empty.txt"}).status_code, 404)
+
+    def test_file_preview_rejects_binary_large_files_and_symlinks(self):
+        self.upload(
+            {
+                "binary": b"hello\0world",
+                "invalid": b"\xff",
+                "large": "x" * (1024 * 1024 + 1),
+                "normal": "text",
+            }
+        )
+        project = Project.objects.get()
+        url = f"/api/projects/{project.pk}/file"
+        for path in ["binary", "invalid", "large"]:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(url, {"path": path}).status_code, 400)
+        with (
+            patch(
+                "backend.services.projects.list_project_files",
+                return_value={
+                    "path": "",
+                    "entries": [{"name": "link", "path": "link", "type": "symlink"}],
+                },
+            ),
+            patch("backend.services.projects._git") as git,
+        ):
+            self.assertEqual(self.client.get(url, {"path": "link"}).status_code, 400)
+            git.assert_not_called()
+
     def test_directory_api(self):
         self.upload({"src/train.py": "pass", "README.md": "Example"})
         project = Project.objects.get()
