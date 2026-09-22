@@ -77,6 +77,8 @@ class TrainingJob(models.Model):
     entrypoint = models.CharField(max_length=1024)
     arguments = models.JSONField(default=list, blank=True)
     requested_gpu = models.CharField(max_length=128, default="0")
+    dockerfile = models.TextField(blank=True)
+    dockerfile_source = models.CharField(max_length=16, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
 

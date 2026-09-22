@@ -12,6 +12,7 @@ dependencies = [
     "django-ninja>=1.4,<2",
     "django-environ>=0.12,<1",
     "psycopg[binary]>=3.2,<4",
+    "packaging>=25,<27",
 ]
 
 [project.scripts]

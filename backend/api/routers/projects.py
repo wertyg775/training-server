@@ -3,11 +3,12 @@ from typing import Literal
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
+from django.http import HttpResponse
 from ninja import File, Form, Router, Schema
 from ninja.files import UploadedFile
 from pydantic import Field
 
-from backend.models import Project
+from backend.models import Project, TrainingJob
 from backend.services.projects import (
     ImportFailure,
     ProjectNotReady,
@@ -33,6 +34,7 @@ class TrainingResponse(Schema):
     entrypoint: str
     arguments: list[str]
     requested_gpu: str
+    dockerfile_source: str
     created_at: datetime
 
 
@@ -147,6 +149,19 @@ def create_training_request(request, project_id: UUID, payload: TrainingRequest)
         return 400, {"detail": " ".join(exc.messages)}
     except ValueError as exc:
         return 400, {"detail": str(exc)}
+
+
+@router.get(
+    "/{project_id}/training-jobs/{job_id}/dockerfile",
+    response={200: str, 404: ErrorResponse},
+)
+def download_training_dockerfile(request, project_id: UUID, job_id: UUID):
+    job = TrainingJob.objects.filter(pk=job_id, project_id=project_id).first()
+    if job is None or not job.dockerfile_source:
+        return 404, {"detail": "Training Dockerfile not found."}
+    response = HttpResponse(job.dockerfile, content_type="text/plain; charset=utf-8")
+    response["Content-Disposition"] = 'attachment; filename="Dockerfile"'
+    return response
 
 
 def _import(**kwargs):

@@ -37,7 +37,10 @@ class Command(BaseCommand):
             with ZipFile(archive, "w") as zipped:
                 for path in sorted(directory.rglob("*")):
                     relative = path.relative_to(directory)
-                    if ".git" in relative.parts or "__pycache__" in relative.parts:
+                    if any(
+                        part in {".git", ".venv", "venv", "__pycache__"}
+                        for part in relative.parts
+                    ):
                         continue
                     if path.is_file() and not path.is_symlink():
                         zipped.write(path, relative.as_posix())

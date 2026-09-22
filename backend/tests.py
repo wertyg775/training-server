@@ -12,7 +12,27 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from backend.models import ContainerExecution, Project, TrainingJob
+from backend.services.dockerfiles import prepare_dockerfile
 from backend.services.projects import list_project_files, list_ready_projects
+
+UV_PROJECT_FILES = {
+    "pyproject.toml": '[project]\nname="training"\nversion="0.1.0"\nrequires-python=">=3.12"\ndependencies=[]\n',
+    "uv.lock": 'version = 1\nrevision = 3\nrequires-python = ">=3.12"\n\n[[package]]\nname = "training"\nversion = "0.1.0"\nsource = { virtual = "." }\n',
+}
+
+
+class DockerfilePreparationTests(SimpleTestCase):
+    def test_does_not_follow_a_dockerfile_symlink(self):
+        with (
+            patch(
+                "backend.services.dockerfiles.list_project_files",
+                return_value={"entries": [{"name": "Dockerfile", "type": "symlink"}]},
+            ),
+            patch("backend.services.dockerfiles.read_project_file") as read,
+            self.assertRaisesMessage(ValueError, "regular file"),
+        ):
+            prepare_dockerfile("project", "train.py", [])
+        read.assert_not_called()
 
 
 class SeedProjectsTests(TestCase):
@@ -105,7 +125,7 @@ class ProjectListTests(TestCase):
 
 class ProjectImportTests(TestCase):
     def test_submit_training_request(self):
-        self.upload({"src/train.py": "pass"})
+        self.upload({"src/train.py": "pass", **UV_PROJECT_FILES})
         project = Project.objects.get()
         # Requests refer to committed files even when the worktree changes.
         (Path(project.storage_path) / "src/train.py").unlink()
@@ -122,6 +142,102 @@ class ProjectImportTests(TestCase):
         self.assertEqual(job.arguments, ["--epochs", "12"])
         self.assertEqual(job.requested_gpu, "0")
         self.assertFalse(ContainerExecution.objects.exists())
+        self.assertEqual(job.dockerfile_source, "generated")
+        self.assertIn(
+            'CMD ["python", "/app/src/train.py", "--epochs", "12"]', job.dockerfile
+        )
+        self.assertIn("uv sync --locked --no-dev --no-editable", job.dockerfile)
+        self.assertNotIn(
+            "Dockerfile",
+            [entry["name"] for entry in list_project_files(project.pk)["entries"]],
+        )
+        download = self.client.get(
+            f"/api/projects/{project.pk}/training-jobs/{job.pk}/dockerfile"
+        )
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(download.content.decode(), job.dockerfile)
+        self.assertEqual(
+            download["Content-Disposition"], 'attachment; filename="Dockerfile"'
+        )
+
+    def submit(self, project):
+        return self.client.post(
+            f"/api/projects/{project.pk}/training-jobs",
+            {"entrypoint": "train.py", "epochs": 2},
+            content_type="application/json",
+        )
+
+    def test_preserves_committed_dockerfile_without_dependency_detection(self):
+        original = "# custom\r\nFROM example/custom:1\r\n"
+        self.upload(
+            {"train.py": "pass", "Dockerfile": original, "pyproject.toml": "invalid"}
+        )
+        project = Project.objects.get()
+        (Path(project.storage_path) / "Dockerfile").write_text("changed")
+        response = self.submit(project)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["dockerfile_source"], "project")
+        self.assertEqual(TrainingJob.objects.get().dockerfile, original)
+
+    def test_generation_reads_uv_manifests_from_snapshot(self):
+        self.upload(
+            {
+                "train.py": "pass",
+                "requirements.txt": "ignored-package",
+                **UV_PROJECT_FILES,
+            }
+        )
+        project = Project.objects.get()
+        (Path(project.storage_path) / "pyproject.toml").unlink()
+        (Path(project.storage_path) / "uv.lock").write_text("invalid")
+        response = self.submit(project)
+        self.assertEqual(response.status_code, 201, response.content)
+        recipe = TrainingJob.objects.get().dockerfile
+        self.assertIn("uv sync --locked", recipe)
+        self.assertNotIn("uv pip install", recipe)
+
+    def test_generation_errors_do_not_save_jobs(self):
+        for files, message in [
+            ({}, "requires a uv project"),
+            ({"requirements.txt": "numpy"}, "requires a uv project"),
+            ({"pyproject.toml": UV_PROJECT_FILES["pyproject.toml"]}, "uv lock"),
+            ({**UV_PROJECT_FILES, "pyproject.toml": "invalid"}, "not valid TOML"),
+            ({**UV_PROJECT_FILES, "uv.lock": "invalid"}, "uv.lock is not valid TOML"),
+            ({**UV_PROJECT_FILES, "pyproject.toml": "[tool.ruff]"}, "[project] table"),
+            ({"pyproject.toml/child": "", "uv.lock": ""}, "regular file"),
+            ({"Dockerfile/child": ""}, "regular file"),
+        ]:
+            with self.subTest(files=files):
+                response = self.upload({"train.py": "pass", **files})
+                project = Project.objects.get(pk=response.json()["id"])
+                response = self.submit(project)
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertIn(message, response.json()["detail"])
+        self.assertFalse(TrainingJob.objects.exists())
+
+    def test_dockerfile_download_scopes_job_to_project_and_handles_legacy_jobs(self):
+        self.upload({"train.py": "pass", **UV_PROJECT_FILES})
+        project = Project.objects.get()
+        response = self.submit(project)
+        job_id = response.json()["id"]
+        other = Project.objects.create(
+            name="Other", source_type=Project.SourceType.UPLOAD
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/api/projects/{other.pk}/training-jobs/{job_id}/dockerfile"
+            ).status_code,
+            404,
+        )
+        TrainingJob.objects.filter(pk=job_id).update(
+            dockerfile="", dockerfile_source=""
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/api/projects/{project.pk}/training-jobs/{job_id}/dockerfile"
+            ).status_code,
+            404,
+        )
 
     def test_training_request_validation(self):
         self.upload(

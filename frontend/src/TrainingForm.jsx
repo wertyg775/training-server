@@ -6,6 +6,7 @@ export default function TrainingForm({ projectId, path }) {
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
+  const [savedJob, setSavedJob] = useState(null);
   const inFlight = useRef(false);
   const runnable = path?.endsWith('.py');
 
@@ -21,8 +22,10 @@ export default function TrainingForm({ projectId, path }) {
     setPending(true);
     setError('');
     setResult('');
+    setSavedJob(null);
     try {
       const job = await submitTraining(projectId, path, count);
+      setSavedJob(job);
       setResult(`Training request saved (${job.id}).`);
     } catch (failure) {
       setError(failure.message);
@@ -42,6 +45,10 @@ export default function TrainingForm({ projectId, path }) {
       </form>
     </div>
     {result && <p className="tree-message" role="status">{result}</p>}
+    {savedJob && <p className="tree-message">
+      {savedJob.dockerfile_source === 'generated' ? 'Dockerfile generated. ' : 'Project Dockerfile preserved. '}
+      <a href={`/api/projects/${projectId}/training-jobs/${savedJob.id}/dockerfile`} download="Dockerfile">Download Dockerfile</a>
+    </p>}
     {error && <p className="tree-message" role="alert">{error}</p>}
   </>;
 }
