@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { listProjectFiles, readProjectFile } from './api.js';
+import TrainingForm from './TrainingForm.jsx';
 
 function Directory({ projectId, path = '', selectedFile, onSelectFile }) {
   const [entries, setEntries] = useState(null);
@@ -83,7 +84,7 @@ export default function ProjectSidebar({ project, onClose }) {
       <div className="project-tree"><Directory projectId={project.id} selectedFile={selectedFile} onSelectFile={setSelectedFile} /></div>
     </section>
     <section className="project-file-preview" aria-label="File contents">
-      <h3>{selectedFile || 'File contents'}</h3>
+      <TrainingForm key={selectedFile || 'none'} projectId={project.id} path={selectedFile} />
       {selectedFile
         ? <FilePreview key={selectedFile} projectId={project.id} path={selectedFile} />
         : <p className="tree-message">Select a file above to view its contents.</p>}
