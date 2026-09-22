@@ -29,6 +29,11 @@ DATASET_MAX_FILES = 100000
 TRAINING_OUTPUT_ROOT = Path(
     os.environ.get("TRAINING_OUTPUT_ROOT", str(BASE_DIR / "data" / "outputs"))
 )
+TRAINING_WORK_ROOT = Path(
+    os.environ.get("TRAINING_WORK_ROOT", str(BASE_DIR / "data" / "worker"))
+)
+TRAINING_GPUS = os.environ.get("TRAINING_GPUS", "0").split(",")
+TRAINING_BUILD_TIMEOUT = int(os.environ.get("TRAINING_BUILD_TIMEOUT", "1800"))
 LOCAL_DB_PATH = BASE_DIR / "data" / "db.sqlite3"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-training-server")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
