@@ -80,3 +80,28 @@ test('reports import failures and non-JSON server errors', async () => {
   globalThis.fetch = async () => new Response('Bad gateway', { status: 502 });
   await assert.rejects(listReadyProjects(), /Request failed \(502\)/);
 });
+
+test('uploads dataset as multipart and links it to a job', async () => {
+  const { uploadDataset, getTrainingJob } = await import('./api.js');
+  const file = new Blob(['a,b\n1,2'], { type: 'text/csv' });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/datasets');
+    assert.equal(options.method, 'POST');
+    assert.equal(await options.body.get('file').text(), 'a,b\n1,2');
+    assert.equal(options.headers, undefined);
+    return Response.json({ id: 'dataset-id' }, { status: 201 });
+  };
+  const dataset = await uploadDataset('project-id', file);
+  globalThis.fetch = async (url, options) => {
+    assert.deepEqual(JSON.parse(options.body), { entrypoint: 'train.py', epochs: 2, dataset_id: dataset.id });
+    return Response.json({ id: 'job-id' });
+  };
+  await submitTraining('project-id', 'train.py', 2, dataset.id);
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/training-jobs/job-id');
+    assert.equal(options.signal, controller.signal);
+    return Response.json({ status: 'finished', dataset: { deleted_at: '2026-09-24T00:00:00Z' } });
+  };
+  assert.equal((await getTrainingJob('project-id', 'job-id', controller.signal)).status, 'finished');
+});

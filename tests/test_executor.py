@@ -49,3 +49,37 @@ class ExecutorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 DockerExecutor().inspect("--help")
             run.assert_not_called()
+
+    def test_dataset_is_mounted_readonly_and_exposed_to_script(self):
+        with tempfile.TemporaryDirectory() as root, patch("subprocess.run") as run:
+            run.return_value.stdout = "a" * 64
+            DockerExecutor().create(
+                "job-" + "b" * 32, "training:test", Path(root), [], dataset=Path(root)
+            )
+            argv = run.call_args.args[0]
+            self.assertIn(f"type=bind,src={root},dst=/dataset,readonly", argv)
+            self.assertIn("GPU_JOB_DATASET_DIR=/dataset", argv)
+
+    def test_missing_container_is_distinct_from_docker_outage(self):
+        import subprocess
+
+        from training_server.executor import ContainerNotFound
+
+        with patch.object(
+            DockerExecutor,
+            "_run",
+            side_effect=subprocess.CalledProcessError(
+                1, "docker", stderr="Error: No such object: abc"
+            ),
+        ):
+            with self.assertRaises(ContainerNotFound):
+                DockerExecutor().inspect("a" * 64)
+        with patch.object(
+            DockerExecutor,
+            "_run",
+            side_effect=subprocess.CalledProcessError(
+                1, "docker", stderr="Cannot connect to Docker daemon"
+            ),
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                DockerExecutor().inspect("a" * 64)
