@@ -3,7 +3,12 @@
 import os
 from pathlib import Path
 
+import environ
+
 BASE_DIR = Path(__file__).resolve().parents[2]
+env = environ.Env()
+# Explicit process environment variables take precedence over .env values.
+environ.Env.read_env(BASE_DIR / ".env")
 PROJECT_STORAGE_ROOT = Path(
     os.environ.get("PROJECT_STORAGE_ROOT", str(BASE_DIR / "project"))
 )
@@ -27,10 +32,10 @@ ROOT_URLCONF = "backend.config.urls"
 WSGI_APPLICATION = "backend.config.wsgi.application"
 ASGI_APPLICATION = "backend.config.asgi.application"
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.environ.get("TRAINING_DATABASE", str(LOCAL_DB_PATH)),
-    }
+    "default": env.db_url(
+        "DATABASE_URL",
+        default=f"sqlite:///{os.environ.get('TRAINING_DATABASE', str(LOCAL_DB_PATH))}",
+    )
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
