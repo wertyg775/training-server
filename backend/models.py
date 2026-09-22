@@ -65,10 +65,43 @@ class Project(models.Model):
                 )
 
 
+class Dataset(models.Model):
+    """One job's uploaded data; keep metadata after removing the payload."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        Project, on_delete=models.PROTECT, related_name="datasets"
+    )
+    name = models.CharField(max_length=255)
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+
 class TrainingJob(models.Model):
     """A request to run a Python entry point from an imported project snapshot."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        FINISHED = "finished", "Finished"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.QUEUED
+    )
+    finished_at = models.DateTimeField(null=True, blank=True)
+    dataset = models.OneToOneField(
+        Dataset,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="training_job",
+    )
     project = models.ForeignKey(
         Project,
         on_delete=models.PROTECT,

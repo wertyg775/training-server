@@ -9,6 +9,7 @@ from ninja.files import UploadedFile
 from pydantic import Field
 
 from backend.models import Project, TrainingJob
+from backend.services.datasets import upload_dataset
 from backend.services.projects import (
     ImportFailure,
     ProjectNotReady,
@@ -26,6 +27,16 @@ router = Router(tags=["projects"])
 class TrainingRequest(Schema):
     entrypoint: str = Field(min_length=1, max_length=1024)
     epochs: int = Field(strict=True, ge=1, le=2147483647)
+    dataset_id: UUID | None = None
+
+
+class DatasetResponse(Schema):
+    id: UUID
+    name: str
+    size_bytes: int
+    created_at: datetime
+    expires_at: datetime | None
+    deleted_at: datetime | None
 
 
 class TrainingResponse(Schema):
@@ -37,6 +48,9 @@ class TrainingResponse(Schema):
     dockerfile_source: str
     environment_validation: dict
     created_at: datetime
+    status: str
+    finished_at: datetime | None
+    dataset: DatasetResponse | None
 
 
 class ProjectResponse(Schema):
@@ -141,7 +155,9 @@ def get_project_file(request, project_id: UUID, path: str):
 def create_training_request(request, project_id: UUID, payload: TrainingRequest):
     """Save a training request; execution is handled separately."""
     try:
-        return 201, submit_training(project_id, payload.entrypoint, payload.epochs)
+        return 201, submit_training(
+            project_id, payload.entrypoint, payload.epochs, payload.dataset_id
+        )
     except Project.DoesNotExist:
         return 404, {"detail": "Project not found."}
     except ProjectNotReady as exc:
@@ -161,6 +177,26 @@ def get_training_request(request, project_id: UUID, job_id: UUID):
     if job is None:
         return 404, {"detail": "Training request not found."}
     return job
+
+
+@router.post(
+    "/{project_id}/datasets",
+    response={
+        201: DatasetResponse,
+        400: ErrorResponse,
+        404: ErrorResponse,
+        409: ErrorResponse,
+    },
+)
+def create_dataset(request, project_id: UUID, file: File[UploadedFile]):
+    try:
+        return 201, upload_dataset(project_id, file)
+    except Project.DoesNotExist:
+        return 404, {"detail": "Project not found."}
+    except ProjectNotReady as exc:
+        return 409, {"detail": str(exc)}
+    except ValueError as exc:
+        return 400, {"detail": str(exc)}
 
 
 @router.get(

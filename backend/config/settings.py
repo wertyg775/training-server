@@ -16,6 +16,19 @@ PROJECT_UPLOAD_MAX_BYTES = 100 * 1024 * 1024
 PROJECT_EXTRACT_MAX_BYTES = 500 * 1024 * 1024
 PROJECT_UPLOAD_MAX_FILES = 10000
 PROJECT_GIT_TIMEOUT = 120
+DATASET_STORAGE_ROOT = Path(
+    os.environ.get("DATASET_STORAGE_ROOT", str(BASE_DIR / "data" / "datasets"))
+)
+DATASET_UPLOAD_MAX_BYTES = int(
+    os.environ.get("DATASET_UPLOAD_MAX_BYTES", str(5 * 1024**3))
+)
+DATASET_EXTRACT_MAX_BYTES = int(
+    os.environ.get("DATASET_EXTRACT_MAX_BYTES", str(20 * 1024**3))
+)
+DATASET_MAX_FILES = 100000
+TRAINING_OUTPUT_ROOT = Path(
+    os.environ.get("TRAINING_OUTPUT_ROOT", str(BASE_DIR / "data" / "outputs"))
+)
 LOCAL_DB_PATH = BASE_DIR / "data" / "db.sqlite3"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "development-only-training-server")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
@@ -37,6 +50,12 @@ DATABASES = {
         default=f"sqlite:///{os.environ.get('TRAINING_DATABASE', str(LOCAL_DB_PATH))}",
     )
 }
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    # SQLite has no row locks. Acquire its write lock before retention checks so
+    # cleanup cannot remove files while submission or retry is claiming them.
+    DATABASES["default"].setdefault("OPTIONS", {}).update(
+        transaction_mode="IMMEDIATE", timeout=60
+    )
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 TIME_ZONE = "UTC"
