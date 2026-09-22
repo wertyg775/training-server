@@ -28,6 +28,9 @@ class TrainingRequest(Schema):
     entrypoint: str = Field(min_length=1, max_length=1024)
     epochs: int = Field(strict=True, ge=1, le=2147483647)
     dataset_id: UUID | None = None
+    requested_gpu: str = Field(
+        default="0", pattern=r"^(?:[0-9]+|GPU-[a-fA-F0-9-]+)$", max_length=128
+    )
 
 
 class DatasetResponse(Schema):
@@ -50,6 +53,7 @@ class TrainingResponse(Schema):
     created_at: datetime
     status: str
     finished_at: datetime | None
+    error: str
     dataset: DatasetResponse | None
 
 
@@ -156,7 +160,11 @@ def create_training_request(request, project_id: UUID, payload: TrainingRequest)
     """Save a training request; execution is handled separately."""
     try:
         return 201, submit_training(
-            project_id, payload.entrypoint, payload.epochs, payload.dataset_id
+            project_id,
+            payload.entrypoint,
+            payload.epochs,
+            payload.dataset_id,
+            payload.requested_gpu,
         )
     except Project.DoesNotExist:
         return 404, {"detail": "Project not found."}
