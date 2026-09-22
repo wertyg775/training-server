@@ -159,3 +159,78 @@ lockfile fails its image build (requires Docker and image/package downloads):
 ```bash
 TRAINING_DOCKER_TESTS=1 uv run python manage.py test backend.test_environments
 ```
+
+### Training datasets and retention
+
+Select a Python file in a project, choose an optional dataset beside the training
+controls, set epochs, and submit. Upload a single file (CSV, Parquet, etc.) or a
+ZIP containing nested dataset folders. ZIPs are extracted with their relative
+paths preserved; symlinks, special files, unsafe paths, encrypted archives, and
+oversized uploads are rejected. Datasets are stored separately from the project's
+Git snapshot and are never added to its generated Docker build context.
+
+Each dataset belongs to exactly one job. Existing jobs without a dataset continue
+to work. The upload API is `POST /api/projects/<project-id>/datasets` with multipart
+`file`; pass its returned `id` as `dataset_id` when submitting a training job.
+The job detail API includes `status`, `finished_at`, and dataset metadata including
+`expires_at` and `deleted_at`. The training form refreshes these values while open.
+
+Apply the schema before starting the updated application:
+
+```bash
+uv run python manage.py migrate
+```
+
+To execute a saved job, build its downloaded Dockerfile against the matching
+project snapshot, then supply that image to the Django-managed runner:
+
+```bash
+uv run python manage.py run_training_job <job-id> --image training:example
+uv run python manage.py cancel_training_job <job-id>
+uv run python manage.py maintain_training
+```
+
+The image's default command must run the selected script with the saved arguments.
+The runner mounts the dataset read-only at `/dataset` and sets
+`GPU_JOB_DATASET_DIR=/dataset`. Scripts should read that environment variable to
+locate their inputs. A single uploaded file is available under its original
+filename; a ZIP exposes its extracted files. Outputs go to `/output`, available
+through `GPU_JOB_OUTPUT_DIR`, and are retained separately for each execution.
+The older `train-submit` / `gpu-run submit` commands remain standalone and do not
+update Django job records. Environment validation is a smoke check, not training
+completion, and does not start dataset expiry.
+
+Jobs move from `queued` to `running`, then `finished` (exit code zero), `failed`,
+or `cancelled`. Completion reconciliation uses Docker's finish timestamp, so
+expiry is 24 hours after actual completion, even when monitoring was delayed.
+Failures and cancellations use the same TTL. Run `run_training_job` again to
+retry a terminal job before its dataset expires: this clears the old deadline
+until the new attempt ends. Expired data requires a new upload and job. Uploads
+never assigned to a job expire 24 hours after upload. Dataset database records,
+job history, and training outputs survive payload deletion.
+
+Schedule `maintain_training` every minute to update completion and remove expired
+files. Cleanup happens on the first successful sweep at or after the deadline.
+A Docker connection failure leaves active datasets intact for a later sweep.
+The repository includes user-systemd units (adjust the checkout and uv paths if
+needed):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/training-maintenance.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now training-maintenance.timer
+```
+
+The timer runs while the user's systemd manager is active; an always-on server
+should arrange for that manager to remain active after logout, or schedule the
+command through its existing service scheduler. Run it as the same user, with
+the same database, dataset storage, and Docker access as the backend. These units
+are provided for installation; migrations and scheduler activation are deployment
+steps, not performed by frontend submission.
+
+Storage defaults to `data/datasets` and `data/outputs`; configure
+`DATASET_STORAGE_ROOT` and `TRAINING_OUTPUT_ROOT` to override these locations.
+`DATASET_UPLOAD_MAX_BYTES` defaults to 5 GiB and `DATASET_EXTRACT_MAX_BYTES` to
+20 GiB, with at most 100,000 ZIP entries. Configure your HTTP server's request
+size and timeout limits to accommodate the intended uploads.
