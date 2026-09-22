@@ -112,7 +112,7 @@ def cleanup_datasets():
             ):
                 continue
             if Dataset.objects.filter(
-                pk=pk, training_job__status__in=["queued", "running"]
+                pk=pk, training_job__status__in=["queued", "building", "running"]
             ).exists():
                 continue
             destination = dataset_path(dataset)

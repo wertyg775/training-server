@@ -26,6 +26,7 @@ class DatasetTests(TestCase):
         override = self.settings(
             DATASET_STORAGE_ROOT=self.root / "datasets",
             TRAINING_OUTPUT_ROOT=self.root / "outputs",
+            TRAINING_WORK_ROOT=self.root / "worker",
         )
         override.enable()
         self.addCleanup(override.disable)
@@ -44,7 +45,17 @@ class DatasetTests(TestCase):
 
     def docker(self, status="exited", code=0):
         docker = Mock()
+        docker.gpu_devices.return_value = {
+            "0": "GPU-00000000-0000-0000-0000-000000000000"
+        }
+        created = [False]
         docker.create.return_value = uuid.uuid4().hex * 2
+
+        def create(*args, **kwargs):
+            created[0] = True
+            return docker.create.return_value
+
+        docker.create.side_effect = create
         docker.inspect.return_value = {
             "Id": docker.create.return_value,
             "Image": "sha256:example",
@@ -54,10 +65,16 @@ class DatasetTests(TestCase):
                 "FinishedAt": timezone.now().isoformat(),
             },
         }
-        docker.inspect.side_effect = lambda container: {
-            **docker.inspect.return_value,
-            "Id": container if len(container) == 64 else docker.create.return_value,
-        }
+
+        def inspect(container):
+            if container.startswith("job-") and not created[0]:
+                raise ContainerNotFound("Not created yet")
+            return {
+                **docker.inspect.return_value,
+                "Id": container if len(container) == 64 else docker.create.return_value,
+            }
+
+        docker.inspect.side_effect = inspect
         return docker
 
     def test_upload_api_and_nested_zip(self):
@@ -223,7 +240,7 @@ class DatasetTests(TestCase):
         self.assertIsNotNone(job.dataset.expires_at)
         job = self.job()
         docker.inspect.side_effect = subprocess.TimeoutExpired("docker", 60)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(subprocess.TimeoutExpired):
             start_job(job.pk, "bad", docker)
         job.refresh_from_db()
         self.assertEqual(job.status, "running")

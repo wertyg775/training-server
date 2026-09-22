@@ -1,0 +1,15 @@
+[Unit]
+Description=Training queue worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/training-server
+ExecStart=%h/.local/bin/uv run --locked python manage.py training_worker
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

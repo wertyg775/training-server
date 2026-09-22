@@ -1,7 +1,0 @@
-[Unit]
-Description=Reconcile training jobs and delete expired datasets
-
-[Service]
-Type=oneshot
-WorkingDirectory=%h/training-server
-ExecStart=%h/.local/bin/uv run --locked python manage.py maintain_training

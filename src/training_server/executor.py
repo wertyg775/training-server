@@ -14,6 +14,30 @@ class ContainerNotFound(ValueError):
 
 
 class DockerExecutor:
+    def gpu_devices(self):
+        """Resolve GPU indexes to stable UUIDs so aliases share a reservation."""
+        output = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+        devices = {}
+        for line in output.splitlines():
+            index, separator, identifier = line.partition(",")
+            index, identifier = index.strip(), identifier.strip()
+            if (
+                not separator
+                or not index.isdigit()
+                or not re.fullmatch(r"GPU-[a-fA-F0-9-]+", identifier)
+            ):
+                raise ValueError("Could not read GPU identities from nvidia-smi.")
+            devices[index] = identifier
+        if not devices:
+            raise ValueError("No NVIDIA GPUs are available.")
+        return devices
+
     def _run(self, *args):
         return subprocess.run(
             ["docker", *args], check=True, capture_output=True, text=True, timeout=60

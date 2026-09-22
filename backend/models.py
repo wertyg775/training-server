@@ -1,5 +1,6 @@
 """Imported project snapshots, training requests and execution attempts."""
 
+import re
 import uuid
 from pathlib import PurePosixPath
 
@@ -86,15 +87,17 @@ class TrainingJob(models.Model):
 
     class Status(models.TextChoices):
         QUEUED = "queued", "Queued"
+        BUILDING = "building", "Building image"
         RUNNING = "running", "Running"
         FINISHED = "finished", "Finished"
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
     status = models.CharField(
-        max_length=16, choices=Status.choices, default=Status.QUEUED
+        max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True
     )
     finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
     dataset = models.OneToOneField(
         Dataset,
         null=True,
@@ -121,6 +124,8 @@ class TrainingJob(models.Model):
 
     def clean(self):
         super().clean()
+        if not re.fullmatch(r"(?:[0-9]+|GPU-[a-fA-F0-9-]+)", self.requested_gpu):
+            raise ValidationError({"requested_gpu": "Select a GPU index or full UUID."})
         path = PurePosixPath(self.entrypoint)
         if (
             not self.entrypoint
@@ -146,6 +151,7 @@ class ContainerExecution(models.Model):
     """One attempt to run a training job in a Docker container."""
 
     class State(models.TextChoices):
+        BUILDING = "building", "Building image"
         STARTING = "starting", "Starting"
         RUNNING = "running", "Running"
         SUCCEEDED = "succeeded", "Succeeded"
@@ -160,6 +166,11 @@ class ContainerExecution(models.Model):
     )
     container_id = models.CharField(max_length=64, null=True, blank=True, unique=True)
     image_digest = models.CharField(max_length=255, blank=True)
+    build_token = models.UUIDField(null=True, blank=True)
+    build_attempts = models.PositiveIntegerField(default=0)
+    build_started_at = models.DateTimeField(null=True, blank=True)
+    build_finished_at = models.DateTimeField(null=True, blank=True)
+    build_log = models.TextField(blank=True)
     assigned_gpu = models.CharField(max_length=128, blank=True)
     state = models.CharField(
         max_length=16,
@@ -175,3 +186,16 @@ class ContainerExecution(models.Model):
 
     class Meta:
         ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["training_job"],
+                condition=models.Q(state__in=["building", "starting", "running"]),
+                name="one_active_execution_per_job",
+            ),
+            models.UniqueConstraint(
+                fields=["assigned_gpu"],
+                condition=models.Q(state__in=["building", "starting", "running"])
+                & ~models.Q(assigned_gpu=""),
+                name="one_active_execution_per_gpu",
+            ),
+        ]

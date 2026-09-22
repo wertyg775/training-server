@@ -12,11 +12,12 @@ from backend.services.projects import list_project_files
 
 
 @transaction.atomic
-def submit_training(project_id, entrypoint, epochs, dataset_id=None):
+def submit_training(project_id, entrypoint, epochs, dataset_id=None, requested_gpu="0"):
     job = TrainingJob(
         project_id=project_id,
         entrypoint=entrypoint,
         arguments=["--epochs", str(epochs)],
+        requested_gpu=requested_gpu,
     )
     # Validate paths before looking up the snapshot or creating any records.
     job.clean()

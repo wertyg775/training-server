@@ -24,7 +24,7 @@ export default function TrainingForm({ projectId, path }) {
         const job = await getTrainingJob(projectId, savedJob.id, controller.signal);
         if (controller.signal.aborted) return;
         setSavedJob(job);
-        if (!['queued', 'running'].includes(job.status)) {
+        if (!['queued', 'building', 'running'].includes(job.status)) {
           if (!job.dataset || job.dataset.deleted_at) return;
           delay = 60000;
         }
@@ -91,6 +91,7 @@ export default function TrainingForm({ projectId, path }) {
     {result && <p className="tree-message" role="status">{result}</p>}
     {savedJob && <div className="tree-message" aria-live="polite">
       <p>Job status: <strong>{savedJob.status}</strong> · {savedJob.entrypoint}</p>
+      {savedJob.error && <p role="alert">{savedJob.error}</p>}
       {savedJob.dataset && <p>{savedJob.dataset.name}: {savedJob.dataset.deleted_at
         ? 'Dataset expired — upload it again for a new job.'
         : savedJob.dataset.expires_at

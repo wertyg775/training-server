@@ -108,9 +108,38 @@ traversal, absolute paths, backslashes, null bytes, missing directories, and
 file paths are rejected. Symlinks and submodules are reported as entries but
 are not followed or expanded.
 
-## Current boundary
+## Training worker
 
-The data model already contains training jobs and container executions, but no
-HTTP endpoints or worker flow currently creates or runs them. Authentication,
-authorization, asynchronous imports, and blob storage are also outside the
-current API surface.
+Training submission persists a queued `TrainingJob` with the selected script,
+arguments, saved Dockerfile, and optional per-job dataset. It performs no Docker
+work in the HTTP request. `training_worker` polls the database, reserves one GPU
+per active execution, builds the image, starts its container, and tracks the
+terminal state. Its periodic dataset sweep replaces the maintenance timer.
+
+```mermaid
+flowchart LR
+    Submit[Submit job] --> Queue[(Queued jobs)]
+    Queue --> Claim[Atomic job and GPU claim]
+    Claim --> Build[Isolated snapshot image build]
+    Build --> Start[Start container with dataset and output mounts]
+    Start --> Monitor[Poll Docker and process cancellation]
+    Monitor --> Done[Finished / failed / cancelled]
+    Done --> TTL[Delete dataset payload after 24 hours]
+    Build -->|build failure or cancellation| Done
+```
+
+Active executions are GPU reservations. Partial unique constraints prohibit two
+active attempts for a job or canonical GPU UUID. The single-host worker and
+manual commands share filesystem operation locks; SQL transactions cover only
+state changes. Builders inherit a separate lock, write a durable result, and
+never start containers. Restart recovery consumes completed builds, waits for
+living builders, restarts interrupted builds up to three times, and reconciles
+existing containers by saved identity. A Docker outage retains the reservation.
+
+`retry_training_job` requeues terminal work before dataset expiry;
+`cancel_training_job` records cancellation and stops or signals the relevant
+execution. `run_training_job --image` and `maintain_training` remain manual
+troubleshooting commands. The standalone CLI does not participate in this queue.
+
+Authentication, authorization, multi-host scheduling, asynchronous project
+imports, and remote blob storage remain outside the current API surface.

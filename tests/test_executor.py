@@ -83,3 +83,15 @@ class ExecutorTests(unittest.TestCase):
         ):
             with self.assertRaises(subprocess.CalledProcessError):
                 DockerExecutor().inspect("a" * 64)
+
+    def test_gpu_discovery_returns_stable_uuid_mapping(self):
+        with patch("subprocess.run") as run:
+            run.return_value.stdout = "0, GPU-00000000-0000-0000-0000-000000000000\n1, GPU-11111111-1111-1111-1111-111111111111\n"
+            self.assertEqual(
+                DockerExecutor().gpu_devices()["1"],
+                "GPU-11111111-1111-1111-1111-111111111111",
+            )
+            self.assertEqual(run.call_args.args[0][0], "nvidia-smi")
+            run.return_value.stdout = "unexpected output"
+            with self.assertRaises(ValueError):
+                DockerExecutor().gpu_devices()

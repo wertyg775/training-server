@@ -181,14 +181,44 @@ Apply the schema before starting the updated application:
 uv run python manage.py migrate
 ```
 
-To execute a saved job, build its downloaded Dockerfile against the matching
-project snapshot, then supply that image to the Django-managed runner:
+Start the database-polling worker to build and execute queued jobs automatically:
 
 ```bash
-uv run python manage.py run_training_job <job-id> --image training:example
+uv run python manage.py training_worker
+# Manage more than one GPU, with one active job per GPU:
+uv run python manage.py training_worker --gpus 0 1
+```
+
+The default GPU is `0`. Set `TRAINING_GPUS=0,1` in `.env` or pass `--gpus` to
+configure worker capacity. Job submissions may specify `requested_gpu` as a GPU
+index or full UUID; the frontend currently submits to GPU 0. The worker resolves
+indexes with `nvidia-smi` and stores UUIDs so two aliases cannot reserve the same
+GPU. It claims the oldest queued job for each free configured GPU. A GPU remains
+reserved during building, startup, and training. Database constraints prevent
+multiple active executions for a job or GPU, including manual starts.
+
+The worker builds the saved Dockerfile against the exact committed snapshot;
+local uncommitted files and datasets are excluded from the build context. Builds
+run in separate processes outside database transactions, allowing monitoring and
+cancellation to continue while other images build. The resulting immutable image
+ID, build timestamps, and the last 8,000 characters of build output are saved on
+the execution. Build errors appear on the job and in the frontend. Build contexts
+are removed after completion; image tags and Docker build cache remain available
+for inspection. `TRAINING_BUILD_TIMEOUT` defaults to 1,800 seconds per build.
+
+Manual troubleshooting and lifecycle commands remain available:
+
+```bash
 uv run python manage.py cancel_training_job <job-id>
+uv run python manage.py retry_training_job <job-id>
+uv run python manage.py run_training_job <job-id> --image training:example
 uv run python manage.py maintain_training
 ```
+
+Cancellation stops training or signals an active image builder. Retries put a
+terminal job back into the queue, provided its dataset has not expired. The
+manual image command shares the worker's GPU reservations. `maintain_training`
+is a one-off execution/retention check; the persistent worker owns image builds.
 
 The image's default command must run the selected script with the saved arguments.
 The runner mounts the dataset read-only at `/dataset` and sets
@@ -200,34 +230,55 @@ The older `train-submit` / `gpu-run submit` commands remain standalone and do no
 update Django job records. Environment validation is a smoke check, not training
 completion, and does not start dataset expiry.
 
-Jobs move from `queued` to `running`, then `finished` (exit code zero), `failed`,
+Jobs move from `queued` to `building` to `running`, then `finished` (exit code zero), `failed`,
 or `cancelled`. Completion reconciliation uses Docker's finish timestamp, so
 expiry is 24 hours after actual completion, even when monitoring was delayed.
-Failures and cancellations use the same TTL. Run `run_training_job` again to
+Failures and cancellations use the same TTL. Run `retry_training_job` to
 retry a terminal job before its dataset expires: this clears the old deadline
 until the new attempt ends. Expired data requires a new upload and job. Uploads
 never assigned to a job expire 24 hours after upload. Dataset database records,
 job history, and training outputs survive payload deletion.
 
-Schedule `maintain_training` every minute to update completion and remove expired
-files. Cleanup happens on the first successful sweep at or after the deadline.
-A Docker connection failure leaves active datasets intact for a later sweep.
-The repository includes user-systemd units (adjust the checkout and uv paths if
-needed):
+The worker polls every two seconds by default and sweeps expired datasets every
+minute, even with an empty queue. Cleanup happens on the first successful sweep
+at or after the deadline. Docker connection failures preserve active reservations
+and datasets until container state can be confirmed.
+
+Only one worker runs per `TRAINING_WORK_ROOT` (default `data/worker`). This version
+supports one Linux host and Docker daemon, with a shared local work directory,
+database, and storage configuration for the worker and manual commands. An
+exclusive process lock prevents duplicate workers. Operation locks serialize
+container actions without keeping database transactions open. SQLite uses
+immediate transactions for claims; PostgreSQL uses row locks. GPU reservation
+constraints apply to Django-managed jobs; standalone CLI jobs are independent.
+
+On restart, the worker resumes monitoring existing containers by saved ID or
+deterministic name. A live image builder retains an inherited lock and may finish
+even after its worker exits. Its durable result is consumed on the next start.
+An interrupted builder without a result is restarted from the saved snapshot
+with a fresh build token; after three interrupted launches, the job fails for
+manual retry. Cancellation takes precedence over a build result. Neither a
+worker restart nor a Docker outage automatically starts a second training attempt.
+
+For continuous operation, install the user-systemd service (adjust the checkout
+and uv paths if needed). If the old maintenance timer was installed, disable it
+with `systemctl --user disable --now training-maintenance.timer` first.
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp deploy/systemd/training-maintenance.* ~/.config/systemd/user/
+cp deploy/systemd/training-worker.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now training-maintenance.timer
+systemctl --user enable --now training-worker.service
+journalctl --user -u training-worker.service -f
 ```
 
-The timer runs while the user's systemd manager is active; an always-on server
-should arrange for that manager to remain active after logout, or schedule the
-command through its existing service scheduler. Run it as the same user, with
-the same database, dataset storage, and Docker access as the backend. These units
-are provided for installation; migrations and scheduler activation are deployment
-steps, not performed by frontend submission.
+The user manager must remain active for unattended operation. Run the worker as
+the backend's user with the same database and storage, Docker access, and
+`nvidia-smi` on PATH. `--poll-interval` controls polling; `--once` performs one
+sweep for diagnostics and may launch a builder. SIGTERM/SIGINT stop new claims;
+saved attempts are recovered next time. The systemd unit also stops child build
+processes on service shutdown. Migrations and service activation are deployment
+steps and are not performed by frontend submission.
 
 Storage defaults to `data/datasets` and `data/outputs`; configure
 `DATASET_STORAGE_ROOT` and `TRAINING_OUTPUT_ROOT` to override these locations.

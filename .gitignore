@@ -16,4 +16,5 @@ dist/
 /project/
 /data/datasets/
 /data/outputs/
+/data/worker/
 node_modules/

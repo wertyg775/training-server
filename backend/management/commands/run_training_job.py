@@ -22,5 +22,5 @@ class Command(BaseCommand):
         except Exception as exc:
             raise CommandError(str(exc)) from exc
         self.stdout.write(
-            f"Execution {attempt.pk} started. Run maintain_training regularly to track completion and retention."
+            f"Execution {attempt.pk}: {attempt.state}. The training worker tracks completion and retention."
         )
