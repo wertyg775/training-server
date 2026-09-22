@@ -84,7 +84,7 @@ export default function ProjectSidebar({ project, onClose }) {
       <div className="project-tree"><Directory projectId={project.id} selectedFile={selectedFile} onSelectFile={setSelectedFile} /></div>
     </section>
     <section className="project-file-preview" aria-label="File contents">
-      <TrainingForm key={selectedFile || 'none'} projectId={project.id} path={selectedFile} />
+      <TrainingForm projectId={project.id} path={selectedFile} />
       {selectedFile
         ? <FilePreview key={selectedFile} projectId={project.id} path={selectedFile} />
         : <p className="tree-message">Select a file above to view its contents.</p>}
