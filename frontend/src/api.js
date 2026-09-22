@@ -17,6 +17,14 @@ export function readProjectFile(projectId, path, signal) {
   return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
 }
 
+export function submitTraining(projectId, entrypoint, epochs) {
+  return request(`/${encodeURIComponent(projectId)}/training-jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entrypoint, epochs }),
+  });
+}
+
 export function listProjectFiles(projectId, path = '', signal) {
   const query = path ? `?${new URLSearchParams({ path })}` : '';
   return request(`/${encodeURIComponent(projectId)}/files${query}`, { signal });

@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { listProjectFiles, listReadyProjects, readProjectFile, uploadProject } from './api.js';
+import { listProjectFiles, listReadyProjects, readProjectFile, submitTraining, uploadProject } from './api.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+test('submits the selected script and epochs as a training request', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/training-jobs');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(options.body), { entrypoint: 'src/train.py', epochs: 12 });
+    return Response.json({ id: 'job-id' }, { status: 201 });
+  };
+  assert.equal((await submitTraining('project-id', 'src/train.py', 12)).id, 'job-id');
+});
+
+test('surfaces rejected training requests', async () => {
+  globalThis.fetch = async () => Response.json({ detail: 'Project is not ready.' }, { status: 409 });
+  await assert.rejects(submitTraining('project-id', 'train.py', 1), /Project is not ready/);
+});
 
 test('loads file contents with encoded paths and cancellation', async () => {
   const controller = new AbortController();
