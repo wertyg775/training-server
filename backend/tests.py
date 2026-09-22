@@ -14,6 +14,7 @@ from django.utils import timezone
 from backend.models import ContainerExecution, Project, TrainingJob
 from backend.services.dockerfiles import prepare_dockerfile
 from backend.services.projects import list_project_files, list_ready_projects
+from backend.services.training import list_training_jobs
 
 UV_PROJECT_FILES = {
     "pyproject.toml": '[project]\nname="training"\nversion="0.1.0"\nrequires-python=">=3.12"\ndependencies=[]\n',
@@ -124,6 +125,37 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_training_jobs_list_returns_metadata_newest_first(self):
+        project = Project.objects.create(
+            name="Demo", source_type=Project.SourceType.UPLOAD
+        )
+        other = Project.objects.create(name="Other", source_type=Project.SourceType.GIT)
+        oldest = TrainingJob.objects.create(
+            project=project, entrypoint="old.py", requested_gpu="0"
+        )
+        newest = TrainingJob.objects.create(
+            project=other, entrypoint="src/train.py", requested_gpu="1"
+        )
+        TrainingJob.objects.filter(pk=oldest.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+        response = self.client.get("/api/projects/training-jobs")
+        self.assertEqual(response.status_code, 200)
+        jobs = response.json()
+        self.assertEqual([job["id"] for job in jobs], [str(newest.pk), str(oldest.pk)])
+        self.assertEqual(jobs[0]["project_name"], "Other")
+        self.assertEqual(jobs[0]["entrypoint"], "src/train.py")
+        self.assertEqual(jobs[0]["status"], "queued")
+        self.assertEqual(jobs[0]["requested_gpu"], "1")
+        self.assertIsNone(jobs[0]["dataset"])
+        self.assertEqual(jobs[1]["project_name"], "Demo")
+        self.assertEqual(list(list_training_jobs()), [newest, oldest])
+
+    def test_training_jobs_list_empty(self):
+        response = self.client.get("/api/projects/training-jobs")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
     def test_submit_training_request(self):
         self.upload({"src/train.py": "pass", **UV_PROJECT_FILES})
         project = Project.objects.get()

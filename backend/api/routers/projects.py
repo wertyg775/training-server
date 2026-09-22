@@ -19,7 +19,7 @@ from backend.services.projects import (
     list_ready_projects,
     read_project_file,
 )
-from backend.services.training import submit_training
+from backend.services.training import list_training_jobs, submit_training
 
 router = Router(tags=["projects"])
 
@@ -52,6 +52,19 @@ class TrainingResponse(Schema):
     environment_validation: dict
     created_at: datetime
     status: str
+    finished_at: datetime | None
+    error: str
+    dataset: DatasetResponse | None
+
+
+class TrainingJobListResponse(Schema):
+    id: UUID
+    project_id: UUID
+    project_name: str
+    entrypoint: str
+    status: str
+    requested_gpu: str
+    created_at: datetime
     finished_at: datetime | None
     error: str
     dataset: DatasetResponse | None
@@ -104,6 +117,12 @@ def get_projects(request):
 def get_ready_projects(request):
     """List ready projects from either import source, newest first."""
     return list_ready_projects()
+
+
+@router.get("/training-jobs", response=list[TrainingJobListResponse])
+def get_training_jobs(request):
+    """List all training jobs across projects, newest first."""
+    return list_training_jobs()
 
 
 @router.get(

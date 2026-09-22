@@ -3,12 +3,22 @@
 from pathlib import PurePosixPath
 
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from backend.models import Dataset, TrainingJob
 from backend.services.datasets import dataset_path
 from backend.services.dockerfiles import prepare_dockerfile
 from backend.services.projects import list_project_files
+
+
+def list_training_jobs():
+    """Return all training jobs, newest first, with project names for display."""
+    return (
+        TrainingJob.objects.select_related("dataset")
+        .annotate(project_name=F("project__name"))
+        .order_by("-created_at", "-id")
+    )
 
 
 @transaction.atomic
