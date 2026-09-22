@@ -79,6 +79,7 @@ class TrainingJob(models.Model):
     requested_gpu = models.CharField(max_length=128, default="0")
     dockerfile = models.TextField(blank=True)
     dockerfile_source = models.CharField(max_length=16, blank=True)
+    environment_validation = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
 

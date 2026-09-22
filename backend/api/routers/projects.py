@@ -35,6 +35,7 @@ class TrainingResponse(Schema):
     arguments: list[str]
     requested_gpu: str
     dockerfile_source: str
+    environment_validation: dict
     created_at: datetime
 
 
@@ -149,6 +150,17 @@ def create_training_request(request, project_id: UUID, payload: TrainingRequest)
         return 400, {"detail": " ".join(exc.messages)}
     except ValueError as exc:
         return 400, {"detail": str(exc)}
+
+
+@router.get(
+    "/{project_id}/training-jobs/{job_id}",
+    response={200: TrainingResponse, 404: ErrorResponse},
+)
+def get_training_request(request, project_id: UUID, job_id: UUID):
+    job = TrainingJob.objects.filter(pk=job_id, project_id=project_id).first()
+    if job is None:
+        return 404, {"detail": "Training request not found."}
+    return job
 
 
 @router.get(

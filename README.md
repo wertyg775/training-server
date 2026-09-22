@@ -103,3 +103,59 @@ instead of silently changing dependency versions.
 Submission prepares the recipe only. Automatic image building and training
 execution from the dashboard are not implemented yet. Existing jobs created
 before this feature do not have a downloadable recipe.
+
+## Validating a generated environment
+
+Check Docker from the terminal that will run the backend commands:
+
+```bash
+id
+ls -l /var/run/docker.sock
+docker info
+docker run --rm hello-world
+```
+
+Submit a new training request and use its displayed job ID:
+
+```bash
+uv run python manage.py validate_training_environment <job-id>
+```
+
+The command exports the committed snapshot into a temporary build context,
+excludes Git metadata, local virtual environments and `.env` files, rejects
+symlinks/submodules, builds the saved Dockerfile, and checks Python plus script
+syntax inside the image. For custom Dockerfiles, validation expects Python on
+PATH and the selected script at `/app/<entrypoint>`. It records the image ID,
+completed steps, output and failures on the job. The report is also available at
+`GET /api/projects/<project-id>/training-jobs/<job-id>`.
+
+Add checks for actual runtime imports, a small PyTorch GPU operation, or execution
+of the image's default command:
+
+```bash
+uv run python manage.py validate_training_environment <job-id> --import-module numpy
+uv run python manage.py validate_training_environment <job-id> --import-module torch --check-cuda
+uv run python manage.py validate_training_environment <job-id> --run-entrypoint
+```
+
+The CUDA check requires PyTorch in the project and uses the job's requested GPU.
+`--run-entrypoint` executes the actual image command, including the saved epochs
+for generated recipes; use a small smoke job. Runtime checks have no network,
+run as your UID with a read-only root filesystem and temporary writable `/tmp`
+and `/output`, and stop after at most 120 seconds. Outputs are discarded. The
+build timeout defaults to 900 seconds and can be set with `--timeout`. Temporary
+containers and the validation image tag are cleaned up; Docker build cache may
+remain. Import checks execute those modules; successful checks establish only
+the tested imports, Python environment, script syntax and optional CUDA/default
+command behavior, not the correctness of an entire training workload.
+
+The bundled `examples/uv-training` has a uv lockfile, a small NumPy regression
+script, and no Dockerfile. Seed it using `uv run python manage.py seed_projects`,
+select its `train.py`, and submit with one epoch to exercise generation.
+
+Run the opt-in integration tests to build/run that example and verify a stale
+lockfile fails its image build (requires Docker and image/package downloads):
+
+```bash
+TRAINING_DOCKER_TESTS=1 uv run python manage.py test backend.test_environments
+```
