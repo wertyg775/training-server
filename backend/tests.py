@@ -11,7 +11,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
-from backend.models import Project
+from backend.models import ContainerExecution, Project, TrainingJob
 from backend.services.projects import list_project_files, list_ready_projects
 
 
@@ -104,6 +104,87 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_submit_training_request(self):
+        self.upload({"src/train.py": "pass"})
+        project = Project.objects.get()
+        # Requests refer to committed files even when the worktree changes.
+        (Path(project.storage_path) / "src/train.py").unlink()
+        response = self.client.post(
+            f"/api/projects/{project.pk}/training-jobs",
+            {"entrypoint": "src/train.py", "epochs": 12},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        job = TrainingJob.objects.get()
+        self.assertEqual(response.json()["id"], str(job.pk))
+        self.assertEqual(job.project_id, project.pk)
+        self.assertEqual(job.entrypoint, "src/train.py")
+        self.assertEqual(job.arguments, ["--epochs", "12"])
+        self.assertEqual(job.requested_gpu, "0")
+        self.assertFalse(ContainerExecution.objects.exists())
+
+    def test_training_request_validation(self):
+        self.upload(
+            {"train.py": "pass", "Dockerfile": "FROM scratch", "dir.py/child": ""}
+        )
+        project = Project.objects.get()
+        url = f"/api/projects/{project.pk}/training-jobs"
+        for epochs in [0, -1, 1.5, True, "3", None, 2147483648]:
+            with self.subTest(epochs=epochs):
+                response = self.client.post(
+                    url,
+                    {"entrypoint": "train.py", "epochs": epochs},
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 422)
+        for entrypoint in [
+            "Dockerfile",
+            "../train.py",
+            "/train.py",
+            "missing.py",
+            "dir.py",
+            "dir\\train.py",
+            "bad\0.py",
+        ]:
+            with self.subTest(entrypoint=entrypoint):
+                response = self.client.post(
+                    url,
+                    {"entrypoint": entrypoint, "epochs": 1},
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+        for status in [Project.Status.IMPORTING, Project.Status.FAILED]:
+            Project.objects.filter(pk=project.pk).update(status=status)
+            response = self.client.post(
+                url,
+                {"entrypoint": "train.py", "epochs": 1},
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 409)
+        project.delete()
+        response = self.client.post(
+            url,
+            {"entrypoint": "train.py", "epochs": 1},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(TrainingJob.objects.exists())
+
+    def test_training_request_rejects_symlink(self):
+        with patch(
+            "backend.services.training.list_project_files",
+            return_value={
+                "entries": [{"name": "train.py", "type": "symlink"}],
+            },
+        ):
+            response = self.client.post(
+                "/api/projects/00000000-0000-0000-0000-000000000000/training-jobs",
+                {"entrypoint": "train.py", "epochs": 1},
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(TrainingJob.objects.exists())
+
     def test_file_preview_reads_snapshot_and_preserves_whitespace(self):
         content = "  # café\r\nprint('<script>')\r\n\n"
         self.upload({"src/my file.py": content, "empty.txt": ""})

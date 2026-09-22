@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
+from django.core.exceptions import ValidationError
 from ninja import File, Form, Router, Schema
 from ninja.files import UploadedFile
 from pydantic import Field
@@ -16,8 +17,23 @@ from backend.services.projects import (
     list_ready_projects,
     read_project_file,
 )
+from backend.services.training import submit_training
 
 router = Router(tags=["projects"])
+
+
+class TrainingRequest(Schema):
+    entrypoint: str = Field(min_length=1, max_length=1024)
+    epochs: int = Field(strict=True, ge=1, le=2147483647)
+
+
+class TrainingResponse(Schema):
+    id: UUID
+    project_id: UUID
+    entrypoint: str
+    arguments: list[str]
+    requested_gpu: str
+    created_at: datetime
 
 
 class ProjectResponse(Schema):
@@ -106,6 +122,29 @@ def get_project_file(request, project_id: UUID, path: str):
         return 404, {"detail": "Project not found."}
     except ProjectNotReady as exc:
         return 409, {"detail": str(exc)}
+    except ValueError as exc:
+        return 400, {"detail": str(exc)}
+
+
+@router.post(
+    "/{project_id}/training-jobs",
+    response={
+        201: TrainingResponse,
+        400: ErrorResponse,
+        404: ErrorResponse,
+        409: ErrorResponse,
+    },
+)
+def create_training_request(request, project_id: UUID, payload: TrainingRequest):
+    """Save a training request; execution is handled separately."""
+    try:
+        return 201, submit_training(project_id, payload.entrypoint, payload.epochs)
+    except Project.DoesNotExist:
+        return 404, {"detail": "Project not found."}
+    except ProjectNotReady as exc:
+        return 409, {"detail": str(exc)}
+    except ValidationError as exc:
+        return 400, {"detail": " ".join(exc.messages)}
     except ValueError as exc:
         return 400, {"detail": str(exc)}
 
