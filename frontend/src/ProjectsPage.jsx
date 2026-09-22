@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { listReadyProjects } from './api.js';
+import ProjectSidebar from './ProjectSidebar.jsx';
 import '../styles.css';
 
 function importedAt(value) {
@@ -24,6 +25,18 @@ export default function ProjectsPage() {
   const [attempt, setAttempt] = useState(0);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const selectAll = useRef(null);
+  const [activeProject, setActiveProject] = useState(null);
+  const projectOpener = useRef(null);
+
+  function openProject(project, row) {
+    projectOpener.current = row.querySelector('.project-name-button');
+    setActiveProject(project);
+  }
+
+  function closeProject() {
+    setActiveProject(null);
+    projectOpener.current?.focus();
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -43,7 +56,7 @@ export default function ProjectsPage() {
   const someSelected = visible.some((project) => selected.has(project.id));
 
   useEffect(() => {
-    selectAll.current.indeterminate = someSelected && !allSelected;
+    if (selectAll.current) selectAll.current.indeterminate = someSelected && !allSelected;
   }, [someSelected, allSelected]);
 
   useEffect(() => {
@@ -106,9 +119,9 @@ export default function ProjectsPage() {
                     : error ? <tr><td colSpan={8}><span role="alert">{error}</span> <button type="button" onClick={() => setAttempt((value) => value + 1)}>Retry</button></td></tr>
                       : visible.length === 0 ? <tr><td colSpan={8} role="status">{query.trim() ? 'No matching projects.' : 'No ready projects yet.'}</td></tr>
                         : visible.map((project) => (
-                          <tr key={project.id}>
-                            <td><input type="checkbox" aria-label={`Select ${project.name}`} checked={selected.has(project.id)} onChange={(event) => toggleSelection([project.id], event.target.checked)} /></td>
-                            <td className="name" title={project.name}>{project.name}</td>
+                          <tr key={project.id} className={`project-row${activeProject?.id === project.id ? ' project-row-active' : ''}`} onClick={(event) => openProject(project, event.currentTarget)}>
+                            <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${project.name}`} checked={selected.has(project.id)} onChange={(event) => toggleSelection([project.id], event.target.checked)} /></td>
+                            <td className="name" title={project.name}><button className="project-name-button" type="button" aria-expanded={activeProject?.id === project.id} aria-controls={activeProject ? 'project-sidebar' : undefined}>{project.name}</button></td>
                             <td>{project.source_type === 'git' ? 'Git' : 'Upload'}</td>
                             <td className="repo" title={project.repository_url}>{project.repository_url?.replace(/^https:\/\//, '') || '-'}</td>
                             <td>{project.requested_revision || '-'}</td>
@@ -123,6 +136,7 @@ export default function ProjectsPage() {
           </main>
         </div>
       </div>
+      {activeProject && <ProjectSidebar key={activeProject.id} project={activeProject} onClose={closeProject} />}
       {isUploadModalOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setIsUploadModalOpen(false);
