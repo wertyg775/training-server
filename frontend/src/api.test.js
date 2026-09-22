@@ -1,9 +1,40 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { listReadyProjects, uploadProject } from './api.js';
+import { listProjectFiles, listReadyProjects, readProjectFile, uploadProject } from './api.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
+
+test('loads file contents with encoded paths and cancellation', async () => {
+  const controller = new AbortController();
+  const content = '  print("hello")\n\n';
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/file?path=src%2Fmy+file%23.py');
+    assert.equal(options.signal, controller.signal);
+    return Response.json({ path: 'src/my file#.py', content });
+  };
+  assert.equal((await readProjectFile('project-id', 'src/my file#.py', controller.signal)).content, content);
+  globalThis.fetch = async () => Response.json({ detail: 'Binary files cannot be previewed.' }, { status: 400 });
+  await assert.rejects(readProjectFile('project-id', 'binary'), /Binary files/);
+});
+
+test('loads root and nested directories with encoded paths and cancellation', async () => {
+  const controller = new AbortController();
+  const paths = [];
+  globalThis.fetch = async (url, options) => {
+    paths.push(url);
+    assert.equal(options.signal, controller.signal);
+    return Response.json({ path: '', entries: [{ name: 'src', path: 'src', type: 'directory' }] });
+  };
+  assert.equal((await listProjectFiles('project-id', '', controller.signal)).entries[0].name, 'src');
+  await listProjectFiles('project-id', 'src/data & models', controller.signal);
+  assert.deepEqual(paths, ['/api/projects/project-id/files', '/api/projects/project-id/files?path=src%2Fdata+%26+models']);
+});
+
+test('reports directory errors from the backend', async () => {
+  globalThis.fetch = async () => Response.json({ detail: 'Project is not ready.' }, { status: 409 });
+  await assert.rejects(listProjectFiles('project-id'), /Project is not ready/);
+});
 
 test('lists only ready projects and preserves server ordering', async () => {
   globalThis.fetch = async (url) => {

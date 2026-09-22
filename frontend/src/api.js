@@ -13,6 +13,15 @@ export async function listReadyProjects(signal) {
   return projects.filter((project) => project.status === 'ready');
 }
 
+export function readProjectFile(projectId, path, signal) {
+  return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
+}
+
+export function listProjectFiles(projectId, path = '', signal) {
+  const query = path ? `?${new URLSearchParams({ path })}` : '';
+  return request(`/${encodeURIComponent(projectId)}/files${query}`, { signal });
+}
+
 // Prepared for the upload flow; the Upload Files button is intentionally unwired.
 export function uploadProject(name, file, signal) {
   const body = new FormData();
