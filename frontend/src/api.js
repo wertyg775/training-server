@@ -17,12 +17,22 @@ export function readProjectFile(projectId, path, signal) {
   return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
 }
 
-export function submitTraining(projectId, entrypoint, epochs) {
+export function submitTraining(projectId, entrypoint, epochs, datasetId) {
   return request(`/${encodeURIComponent(projectId)}/training-jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entrypoint, epochs }),
+    body: JSON.stringify({ entrypoint, epochs, ...(datasetId ? { dataset_id: datasetId } : {}) }),
   });
+}
+
+export function uploadDataset(projectId, file) {
+  const body = new FormData();
+  body.append('file', file);
+  return request(`/${encodeURIComponent(projectId)}/datasets`, { method: 'POST', body });
+}
+
+export function getTrainingJob(projectId, jobId, signal) {
+  return request(`/${encodeURIComponent(projectId)}/training-jobs/${encodeURIComponent(jobId)}`, { signal });
 }
 
 export function listProjectFiles(projectId, path = '', signal) {

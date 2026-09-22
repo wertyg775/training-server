@@ -492,6 +492,10 @@ body {
 }
 .project-tree { padding: 16px; overflow: auto; flex: 1; }
 .directory-list { list-style: none; margin: 0; padding: 0; }
+.dataset-upload { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; }
+.dataset-upload label { display: block; margin-bottom: 8px; font-weight: 600; }
+.dataset-upload input { max-width: 100%; }
+.dataset-upload p { margin: 8px 0 0; font-size: 12px; color: #64748b; }
 .directory-list .directory-list { padding-left: 18px; }
 .directory-toggle, .directory-file {
   display: flex;
