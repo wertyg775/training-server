@@ -13,6 +13,10 @@ export async function listReadyProjects(signal) {
   return projects.filter((project) => project.status === 'ready');
 }
 
+export function listTrainingJobs(signal) {
+  return request('/training-jobs', { signal });
+}
+
 export function readProjectFile(projectId, path, signal) {
   return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
 }

@@ -16,7 +16,7 @@ function importedAt(value) {
   return `${amount} ${unit}${amount === 1 ? '' : 's'} ago`;
 }
 
-export default function ProjectsPage() {
+export default function ProjectsPage({ onNavigate }) {
   const [projects, setProjects] = useState([]);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(new Set());
@@ -83,7 +83,7 @@ export default function ProjectsPage() {
         <aside className="sidebar">
           <nav className="nav" aria-label="Main">
             <a className="nav-item active" href="#" aria-current="page"><span className="nav-icon" aria-hidden="true">▣</span>Projects</a>
-            <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">◉</span>Training Jobs</a>
+            <a className="nav-item" href="#" onClick={(event) => { event.preventDefault(); onNavigate('training-jobs'); }}><span className="nav-icon" aria-hidden="true">◉</span>Training Jobs</a>
             <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">▶</span>Executions</a>
             <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</a>
           </nav>

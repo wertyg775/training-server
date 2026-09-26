@@ -10,3 +10,4 @@
 - Handled lowercase Docker missing-container errors with executor and worker regression coverage.
 - Added queued startup checks, explicit submission, and dataset path mapping with lifecycle regression coverage.
 - Added frontend API support for mapped datasets and submission of successful startup checks.
+- Added the training jobs dashboard and submission of completed startup checks.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { listProjectFiles, listReadyProjects, readProjectFile, submitTraining, uploadProject } from './api.js';
+import { listProjectFiles, listReadyProjects, listTrainingJobs, readProjectFile, submitTraining, uploadProject } from './api.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -58,6 +58,17 @@ test('lists only ready projects and preserves server ordering', async () => {
     return Response.json([{ id: 'new', status: 'ready' }, { id: 'failed', status: 'failed' }, { id: 'old', status: 'ready' }]);
   };
   assert.deepEqual((await listReadyProjects()).map((project) => project.id), ['new', 'old']);
+});
+
+test('lists training jobs with cancellation support', async () => {
+  const controller = new AbortController();
+  const jobs = [{ id: 'job-1', project_name: 'Demo', entrypoint: 'train.py', status: 'queued' }];
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/training-jobs');
+    assert.equal(options.signal, controller.signal);
+    return Response.json(jobs);
+  };
+  assert.deepEqual(await listTrainingJobs(controller.signal), jobs);
 });
 
 test('uploads ZIPs using the backend multipart field names', async () => {
