@@ -25,7 +25,7 @@ from backend.services.executions import (
 )
 from backend.services.worker import TrainingWorker
 from backend.services.worker_locks import attempt_directory, file_lock
-from training_server.executor import ContainerNotFound
+from training_server.executor import LABEL, ContainerNotFound, DockerExecutor
 
 DEVICES = {
     "0": "GPU-00000000-0000-0000-0000-000000000000",
@@ -180,6 +180,36 @@ class WorkerTests(TestCase):
         self.docker.inspect.return_value = running
         reconcile_execution(attempt.pk, self.docker)
         self.assertEqual(self.docker.create.call_count, 1)
+
+    def test_lowercase_missing_container_dispatches_through_real_executor(self):
+        attempt = reserve_job(self.job().pk, DEVICES, image=IMAGE)
+        container = "b" * 64
+        created = {
+            "Id": container,
+            "Image": IMAGE,
+            "Config": {"Labels": {LABEL: "true"}},
+            "State": {"Status": "created"},
+        }
+        running = {**created, "State": {"Status": "running"}}
+        with patch.object(DockerExecutor, "_run") as run:
+            run.side_effect = [
+                subprocess.CalledProcessError(
+                    1, "docker", stderr=f"error: no such object: job-{attempt.pk.hex}"
+                ),
+                container,
+                json.dumps([created]),
+                json.dumps([created]),
+                "",
+                json.dumps([running]),
+            ]
+            reconcile_execution(attempt.pk, DockerExecutor())
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            ["inspect", "create", "inspect", "inspect", "start", "inspect"],
+        )
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.state, "running")
+        self.assertEqual(attempt.container_id, container)
 
     def test_build_failure_releases_gpu_and_retry_requeues(self):
         job = self.job()

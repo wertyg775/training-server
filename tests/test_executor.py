@@ -65,15 +65,24 @@ class ExecutorTests(unittest.TestCase):
 
         from training_server.executor import ContainerNotFound
 
-        with patch.object(
-            DockerExecutor,
-            "_run",
-            side_effect=subprocess.CalledProcessError(
-                1, "docker", stderr="Error: No such object: abc"
-            ),
+        for stderr in (
+            "Error: No such object: abc",
+            "error: no such object: abc",
+            "Error response from daemon: No such container: abc",
+            "error response from daemon: no such container: abc",
         ):
-            with self.assertRaises(ContainerNotFound):
-                DockerExecutor().inspect("a" * 64)
+            with (
+                self.subTest(stderr=stderr),
+                patch.object(
+                    DockerExecutor,
+                    "_run",
+                    side_effect=subprocess.CalledProcessError(
+                        1, "docker", stderr=stderr
+                    ),
+                ),
+            ):
+                with self.assertRaises(ContainerNotFound):
+                    DockerExecutor().inspect("a" * 64)
         with patch.object(
             DockerExecutor,
             "_run",

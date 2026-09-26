@@ -109,9 +109,8 @@ class DockerExecutor:
         try:
             raw = self._run("inspect", container)
         except subprocess.CalledProcessError as exc:
-            if "No such object:" in (exc.stderr or "") or "No such container:" in (
-                exc.stderr or ""
-            ):
+            stderr = (exc.stderr or "").lower()
+            if "no such object:" in stderr or "no such container:" in stderr:
                 raise ContainerNotFound("Training container no longer exists.") from exc
             raise
         info = json.loads(raw)[0]

@@ -7,3 +7,4 @@
 - Added per-job file/ZIP dataset uploads, status and expiry display, and cleanup 24 hours after completion, failure, or cancellation.
 - Kept one persistent filename, epoch, and submit control when switching files.
 - Added Dockerfile generation, environment validation, examples, and architecture/deployment documentation.
+- Handled lowercase Docker missing-container errors with executor and worker regression coverage.
