@@ -125,6 +125,42 @@ class ProjectListTests(TestCase):
 
 
 class ProjectImportTests(TestCase):
+    def test_executions_list_returns_attempts_with_job_context_newest_first(self):
+        project = Project.objects.create(
+            name="Demo", source_type=Project.SourceType.UPLOAD
+        )
+        job = TrainingJob.objects.create(project=project, entrypoint="train.py")
+        oldest = ContainerExecution.objects.create(
+            training_job=job,
+            state="failed",
+            assigned_gpu="GPU-older",
+            error="Build failed",
+        )
+        newest = ContainerExecution.objects.create(
+            training_job=job, state="succeeded", assigned_gpu="GPU-newer", exit_code=0
+        )
+        ContainerExecution.objects.filter(pk=oldest.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+        response = self.client.get("/api/projects/executions")
+        self.assertEqual(response.status_code, 200)
+        executions = response.json()
+        self.assertEqual(
+            [execution["id"] for execution in executions],
+            [str(newest.pk), str(oldest.pk)],
+        )
+        self.assertEqual(executions[0]["training_job_id"], str(job.pk))
+        self.assertEqual(executions[0]["project_name"], "Demo")
+        self.assertEqual(executions[0]["entrypoint"], "train.py")
+        self.assertEqual(executions[0]["exit_code"], 0)
+        self.assertEqual(executions[1]["error"], "Build failed")
+        self.assertNotIn("output_path", executions[0])
+
+    def test_executions_list_empty(self):
+        response = self.client.get("/api/projects/executions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
     def test_training_jobs_list_returns_metadata_newest_first(self):
         project = Project.objects.create(
             name="Demo", source_type=Project.SourceType.UPLOAD
