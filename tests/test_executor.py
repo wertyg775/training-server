@@ -1,13 +1,116 @@
+import io
 import json
+import subprocess
+import tarfile
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
 from training_server.executor import LABEL, DockerExecutor
 
 
 class ExecutorTests(unittest.TestCase):
+    def test_capture_changed_project_files_only(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root)
+            executor = DockerExecutor()
+            with (
+                patch.object(executor, "inspect"),
+                patch.object(
+                    executor,
+                    "_run",
+                    return_value=(
+                        "C /app\nA /app/checkpoints\nA /app/checkpoints/model.pt\n"
+                        "C /app/metrics.json\nA /other/secret\nD /app/old.pt\n"
+                    ),
+                ),
+                patch.object(executor, "_copy_regular_file") as copy,
+            ):
+                executor.capture_project_files("a" * 64, output)
+            self.assertEqual(
+                [call.args[1] for call in copy.call_args_list],
+                [
+                    "/app/checkpoints",
+                    "/app/checkpoints/model.pt",
+                    "/app/metrics.json",
+                ],
+            )
+            self.assertEqual(
+                copy.call_args_list[-1].args[2:],
+                (output, PurePosixPath("metrics.json")),
+            )
+
+    def test_copy_regular_file_skips_directories_and_links(self):
+        with tempfile.TemporaryDirectory() as root:
+            destination = Path(root) / "project-files" / "model.pt"
+            real_popen = subprocess.Popen
+
+            def archive_bytes(member):
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode="w") as archive:
+                    info = tarfile.TarInfo("model.pt")
+                    info.type = member
+                    info.size = 5 if member == tarfile.REGTYPE else 0
+                    archive.addfile(info, io.BytesIO(b"model") if info.size else None)
+                return buffer.getvalue()
+
+            def launch(data):
+                archive_path = Path(root) / "archive.tar"
+                archive_path.write_bytes(data)
+                with patch(
+                    "training_server.executor.subprocess.Popen",
+                    side_effect=lambda *args, **kwargs: real_popen(
+                        ["cat", str(archive_path)],
+                        stdout=kwargs["stdout"],
+                        stderr=kwargs["stderr"],
+                    ),
+                ):
+                    DockerExecutor._copy_regular_file(
+                        "a" * 64,
+                        "/app/model.pt",
+                        Path(root),
+                        PurePosixPath("model.pt"),
+                    )
+
+            launch(archive_bytes(tarfile.REGTYPE))
+            self.assertEqual(destination.read_bytes(), b"model")
+            destination.unlink()
+            launch(archive_bytes(tarfile.DIRTYPE))
+            self.assertFalse(destination.exists())
+            launch(archive_bytes(tarfile.SYMTYPE))
+            self.assertFalse(destination.exists())
+
+    def test_capture_rejects_symlinked_output_folder(self):
+        with tempfile.TemporaryDirectory() as root:
+            outside = Path(root) / "outside"
+            outside.mkdir()
+            output = Path(root) / "output"
+            output.mkdir()
+            (output / "project-files").symlink_to(outside, target_is_directory=True)
+            archive_path = Path(root) / "archive.tar"
+            with tarfile.open(archive_path, "w") as archive:
+                member = tarfile.TarInfo("model.pt")
+                member.size = 5
+                archive.addfile(member, io.BytesIO(b"model"))
+            real_popen = subprocess.Popen
+            with patch(
+                "training_server.executor.subprocess.Popen",
+                side_effect=lambda *args, **kwargs: real_popen(
+                    ["cat", str(archive_path)],
+                    stdout=kwargs["stdout"],
+                    stderr=kwargs["stderr"],
+                ),
+            ):
+                with self.assertRaises(OSError):
+                    DockerExecutor._copy_regular_file(
+                        "a" * 64,
+                        "/app/model.pt",
+                        output,
+                        PurePosixPath("model.pt"),
+                    )
+            self.assertFalse((outside / "model.pt").exists())
+
     def test_create_preserves_arguments_and_mounts_output(self):
         with tempfile.TemporaryDirectory() as root, patch("subprocess.run") as run:
             run.return_value.stdout = "a" * 64

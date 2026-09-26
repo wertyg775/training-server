@@ -75,7 +75,8 @@ export default function TrainingJobsPage({ onNavigate }) {
           <nav className="nav" aria-label="Main">
             <a className="nav-item" href="#" onClick={(event) => { event.preventDefault(); onNavigate('projects'); }}><span className="nav-icon" aria-hidden="true">▣</span>Projects</a>
             <a className="nav-item active" href="#" aria-current="page"><span className="nav-icon" aria-hidden="true">◉</span>Training Jobs</a>
-            <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">▶</span>Executions</a>
+            <a className="nav-item" href="#" onClick={(event) => { event.preventDefault(); onNavigate('executions'); }}><span className="nav-icon" aria-hidden="true">▶</span>Executions</a>
+            <a className="nav-item" href="#" onClick={(event) => { event.preventDefault(); onNavigate('outputs'); }}><span className="nav-icon" aria-hidden="true">▤</span>Outputs</a>
             <a className="nav-item" href="#"><span className="nav-icon" aria-hidden="true">⚙</span>Settings</a>
           </nav>
         </aside>

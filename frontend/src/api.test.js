@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { listProjectFiles, listReadyProjects, listTrainingJobs, readProjectFile, submitTraining, uploadProject } from './api.js';
+import { listExecutions, listOutputRuns, listProjectFiles, listReadyProjects, listTrainingJobs, outputDownloadUrl, readProjectFile, submitTraining, uploadProject } from './api.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -69,6 +69,29 @@ test('lists training jobs with cancellation support', async () => {
     return Response.json(jobs);
   };
   assert.deepEqual(await listTrainingJobs(controller.signal), jobs);
+});
+
+test('lists executions with cancellation support', async () => {
+  const controller = new AbortController();
+  const executions = [{ id: 'execution-1', project_name: 'Demo', state: 'succeeded' }];
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/executions');
+    assert.equal(options.signal, controller.signal);
+    return Response.json(executions);
+  };
+  assert.deepEqual(await listExecutions(controller.signal), executions);
+});
+
+test('lists output runs and builds nested file download URLs', async () => {
+  const controller = new AbortController();
+  const runs = [{ execution_id: 'attempt-id', project_name: 'Demo', files: [{ path: 'models/final model.pt' }] }];
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/outputs');
+    assert.equal(options.signal, controller.signal);
+    return Response.json(runs);
+  };
+  assert.deepEqual(await listOutputRuns(controller.signal), runs);
+  assert.equal(outputDownloadUrl('attempt-id', 'models/final model.pt'), '/api/projects/executions/attempt-id/output?path=models%2Ffinal+model.pt');
 });
 
 test('uploads ZIPs using the backend multipart field names', async () => {

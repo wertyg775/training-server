@@ -3,8 +3,12 @@
 import json
 import os
 import re
+import shutil
 import subprocess
-from pathlib import Path
+import tarfile
+import tempfile
+import uuid
+from pathlib import Path, PurePosixPath
 
 LABEL = "training-server.managed"
 
@@ -164,3 +168,97 @@ class DockerExecutor:
     def remove(self, container: str):
         self.inspect(container)
         self._run("rm", "--force", container)
+
+    def capture_project_files(self, container: str, output: Path):
+        """Save changed regular files under /app from a stopped container."""
+        self.inspect(container)
+        changes = self._run("diff", container)
+        for line in changes.splitlines():
+            if not line.startswith(("A /app/", "C /app/")):
+                continue
+            path = line[2:]
+            relative = PurePosixPath(path).relative_to("/app")
+            if (
+                not relative.parts
+                or ".." in relative.parts
+                or any("\\" in part or "\0" in part for part in relative.parts)
+            ):
+                continue
+            self._copy_regular_file(container, path, output, relative)
+
+    @staticmethod
+    def _copy_regular_file(
+        container: str, source: str, output: Path, relative: PurePosixPath
+    ):
+        # Docker can copy a stopped container. Read the archive header first so
+        # changed directories do not recursively copy the whole project.
+        with tempfile.TemporaryFile() as errors:
+            process = subprocess.Popen(
+                ["docker", "cp", f"{container}:{source}", "-"],
+                stdout=subprocess.PIPE,
+                stderr=errors,
+            )
+            directory_fd = None
+            temporary = None
+            try:
+                with tarfile.open(fileobj=process.stdout, mode="r|") as archive:
+                    member = next(iter(archive), None)
+                    if member is None or not member.isfile():
+                        process.terminate()
+                        process.wait(timeout=30)
+                        return
+                    directory_fd = os.open(
+                        output, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+                    )
+                    for part in ("project-files", *relative.parts[:-1]):
+                        try:
+                            os.mkdir(part, dir_fd=directory_fd)
+                        except FileExistsError:
+                            pass
+                        next_fd = os.open(
+                            part,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=directory_fd,
+                        )
+                        os.close(directory_fd)
+                        directory_fd = next_fd
+                    temporary = ".capture-" + uuid.uuid4().hex
+                    target_fd = os.open(
+                        temporary,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=directory_fd,
+                    )
+                    with os.fdopen(target_fd, "wb") as target:
+                        source_file = archive.extractfile(member)
+                        if source_file is None:
+                            raise ValueError(f"Could not read project file {source}")
+                        shutil.copyfileobj(source_file, target)
+                # Consume the remaining tar stream before checking Docker's exit.
+                for _ in iter(lambda: process.stdout.read(65536), b""):
+                    pass
+                if process.wait(timeout=60):
+                    errors.seek(0)
+                    raise subprocess.CalledProcessError(
+                        process.returncode,
+                        process.args,
+                        stderr=errors.read().decode(errors="replace"),
+                    )
+                os.replace(
+                    temporary,
+                    relative.parts[-1],
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                )
+                temporary = None
+            except tarfile.TarError as exc:
+                raise ValueError(f"Could not read project file {source}") from exc
+            finally:
+                process.stdout.close()
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                if temporary is not None:
+                    os.unlink(temporary, dir_fd=directory_fd)
+                if directory_fd is not None:
+                    os.close(directory_fd)

@@ -49,6 +49,26 @@ npm run dev
 
 Open the URL printed by Vite. API requests are proxied to the backend on port 8000.
 
+## Start all services together
+
+For first-time setup, install the frontend dependencies and apply migrations:
+
+```bash
+npm --prefix frontend ci
+uv run python manage.py migrate
+```
+
+Then start the backend, frontend, and training worker from the repository root:
+
+```bash
+uv run honcho start
+```
+
+Honcho reads the root `Procfile` and `.env`, prefixes each service's output, and
+stops the group with Ctrl+C. The worker needs Docker and a configured GPU; to
+run only the web services, use `uv run honcho start backend frontend`. Seeding
+example projects remains optional: `uv run python manage.py seed_projects`.
+
 ## Checks
 
 ```bash
@@ -233,19 +253,25 @@ Manual troubleshooting and lifecycle commands remain available:
 uv run python manage.py cancel_training_job <job-id>
 uv run python manage.py retry_training_job <job-id>
 uv run python manage.py run_training_job <job-id> --image training:example
-uv run python manage.py maintain_training
 ```
 
 Cancellation stops training or signals an active image builder. Retries put a
 terminal job back into the queue, provided its dataset has not expired. The
-manual image command shares the worker's GPU reservations. `maintain_training`
-is a one-off execution/retention check; the persistent worker owns image builds.
+manual image command shares the worker's GPU reservations. On every poll, the
+worker reconciles active executions before claiming queued jobs; it also sweeps
+expired datasets periodically.
 
 The image's default command must run the selected script with the saved arguments.
 Without a dataset mapping, the runner retains the legacy read-only `/dataset`
 mount and `GPU_JOB_DATASET_DIR=/dataset`. With a mapping, that variable points to
 the mapped file or folder under `/app`. Outputs go to `/output`, available
 through `GPU_JOB_OUTPUT_DIR`, and are retained separately for each execution.
+The Outputs page groups saved files by project, script, and attempt time. Open a
+run to browse folders and download individual files; the project snapshot stays
+unchanged. Training code can write to `/output` or save within `/app`: new or
+changed regular files under `/app` are collected after the container stops and
+appear under `project-files/` in Outputs. Files elsewhere in the container are
+not collected. Startup-check outputs are discarded after the check.
 The older `train-submit` / `gpu-run submit` commands remain standalone and do not
 update Django job records. Environment validation is a smoke check, not training
 completion, and does not start dataset expiry.
@@ -259,7 +285,7 @@ until the new attempt ends. Expired data requires a new upload and job. Uploads
 never assigned to a job expire 24 hours after upload. Dataset database records,
 job history, and training outputs survive payload deletion.
 
-The worker polls every two seconds by default and sweeps expired datasets every
+The worker polls every 20 seconds by default and sweeps expired datasets every
 minute, even with an empty queue. Cleanup happens on the first successful sweep
 at or after the deadline. Docker connection failures preserve active reservations
 and datasets until container state can be confirmed.

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -17,6 +18,18 @@ from training_server.executor import ContainerNotFound, DockerExecutor
 
 ACTIVE = ["building", "starting", "running"]
 DOCKER_ERRORS = (OSError, ValueError, subprocess.SubprocessError)
+
+
+def list_executions():
+    """Return execution attempts across projects, newest first."""
+    return (
+        ContainerExecution.objects.select_related("training_job__project")
+        .annotate(
+            project_name=F("training_job__project__name"),
+            entrypoint=F("training_job__entrypoint"),
+        )
+        .order_by("-created_at", "-id")
+    )
 
 
 class GPUUnavailable(ValueError):
@@ -334,6 +347,7 @@ def _reconcile(attempt, executor):
             state="running", started_at=attempt.started_at or started
         )
     elif state["Status"] in ["exited", "dead"]:
+        executor.capture_project_files(container, Path(attempt.output_path))
         completed = parse_datetime(state.get("FinishedAt", ""))
         if completed is None or completed.year < 2000:
             completed = timezone.now()

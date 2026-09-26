@@ -76,6 +76,8 @@ flowchart TD
 | `GET /api/health` | Application liveness only; it does not check Docker or GPU availability. | `200` |
 | `GET /api/projects` | List all imported projects, including failed and ready records. | `200` |
 | `GET /api/projects/ready` | List projects whose snapshots are ready to browse or use. | `200` |
+| `GET /api/projects/outputs` | List saved output files grouped by training run. | `200` |
+| `GET /api/projects/executions/{execution_id}/output?path=model.pt` | Download one regular output file. | `200`, `400`, `404` |
 | `GET /api/projects/{project_id}/files` | List the root directory of a ready snapshot. | `200`, `404`, `409` |
 | `GET /api/projects/{project_id}/files?path=src` | List a relative directory within a ready snapshot. | `200`, `400`, `404`, `409` |
 | `POST /api/projects/upload` | Import a ZIP archive as a new immutable Git-backed snapshot. | `201`, `400`, `422` |
@@ -138,8 +140,9 @@ existing containers by saved identity. A Docker outage retains the reservation.
 
 `retry_training_job` requeues terminal work before dataset expiry;
 `cancel_training_job` records cancellation and stops or signals the relevant
-execution. `run_training_job --image` and `maintain_training` remain manual
-troubleshooting commands. The standalone CLI does not participate in this queue.
+execution. `run_training_job --image` remains a manual troubleshooting command.
+The worker reconciles active executions before polling queued jobs and sweeps
+expired datasets periodically. The standalone CLI does not participate in this queue.
 
 Authentication, authorization, multi-host scheduling, asynchronous project
 imports, and remote blob storage remain outside the current API surface.

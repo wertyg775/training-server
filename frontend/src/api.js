@@ -17,6 +17,18 @@ export function listTrainingJobs(signal) {
   return request('/training-jobs', { signal });
 }
 
+export function listExecutions(signal) {
+  return request('/executions', { signal });
+}
+
+export function listOutputRuns(signal) {
+  return request('/outputs', { signal });
+}
+
+export function outputDownloadUrl(executionId, path) {
+  return `/api/projects/executions/${encodeURIComponent(executionId)}/output?${new URLSearchParams({ path })}`;
+}
+
 export function readProjectFile(projectId, path, signal) {
   return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
 }

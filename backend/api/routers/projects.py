@@ -1,15 +1,19 @@
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Literal
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
+from django.http import FileResponse as DjangoFileResponse
 from django.http import HttpResponse
 from ninja import File, Form, Router, Schema
 from ninja.files import UploadedFile
 from pydantic import Field
 
-from backend.models import Project, TrainingJob
+from backend.models import ContainerExecution, Project, TrainingJob
 from backend.services.datasets import upload_dataset
+from backend.services.executions import list_executions
+from backend.services.outputs import list_output_runs, open_output_file
 from backend.services.projects import (
     ImportFailure,
     ProjectNotReady,
@@ -78,6 +82,37 @@ class TrainingJobListResponse(Schema):
     dataset: DatasetResponse | None
 
 
+class ExecutionListResponse(Schema):
+    id: UUID
+    training_job_id: UUID
+    project_name: str
+    entrypoint: str
+    state: str
+    assigned_gpu: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    exit_code: int | None
+    error: str
+
+
+class OutputFileResponse(Schema):
+    path: str
+    size_bytes: int
+
+
+class OutputRunResponse(Schema):
+    execution_id: UUID
+    project_name: str
+    entrypoint: str
+    run_number: int
+    state: str
+    created_at: datetime
+    finished_at: datetime | None
+    files: list[OutputFileResponse]
+    truncated: bool
+
+
 class ProjectResponse(Schema):
     id: UUID
     name: str
@@ -131,6 +166,37 @@ def get_ready_projects(request):
 def get_training_jobs(request):
     """List all training jobs across projects, newest first."""
     return list_training_jobs()
+
+
+@router.get("/executions", response=list[ExecutionListResponse])
+def get_executions(request):
+    """List all execution attempts across projects, newest first."""
+    return list_executions()
+
+
+@router.get("/outputs", response=list[OutputRunResponse])
+def get_outputs(request):
+    """List files saved by training runs, grouped by execution."""
+    return list_output_runs()
+
+
+@router.get(
+    "/executions/{execution_id}/output",
+    response={200: str, 400: ErrorResponse, 404: ErrorResponse},
+)
+def download_output(request, execution_id: UUID, path: str):
+    execution = ContainerExecution.objects.filter(pk=execution_id).first()
+    if execution is None:
+        return 404, {"detail": "Execution not found."}
+    try:
+        output = open_output_file(execution, path)
+    except ValueError as exc:
+        return 400, {"detail": str(exc)}
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return 404, {"detail": "Output file not found."}
+    return DjangoFileResponse(
+        output, as_attachment=True, filename=PurePosixPath(path).name
+    )
 
 
 @router.get(
