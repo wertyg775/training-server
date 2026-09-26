@@ -162,18 +162,39 @@ TRAINING_DOCKER_TESTS=1 uv run python manage.py test backend.test_environments
 
 ### Training datasets and retention
 
-Select a Python file in a project, choose an optional dataset beside the training
-controls, set epochs, and submit. Upload a single file (CSV, Parquet, etc.) or a
-ZIP containing nested dataset folders. ZIPs are extracted with their relative
-paths preserved; symlinks, special files, unsafe paths, encrypted archives, and
-oversized uploads are rejected. Datasets are stored separately from the project's
-Git snapshot and are never added to its generated Docker build context.
+Select a Python file and upload an optional dataset separately. For a single file,
+enter the exact location your script reads, such as `data/train.csv`; the upload
+appears at `/app/data/train.csv`, regardless of its original filename. For a ZIP,
+enter a folder such as `data`; its contents appear below `/app/data`, preserving
+nested paths. If the ZIP already contains a `data/` folder, account for that extra
+level when choosing the location. Mapped datasets are read-only. Generated images
+run from `/app`; custom Dockerfiles should use that project directory for relative
+paths. No dataset argument or code changes are required for matching relative paths.
 
-Each dataset belongs to exactly one job. Existing jobs without a dataset continue
-to work. The upload API is `POST /api/projects/<project-id>/datasets` with multipart
-`file`; pass its returned `id` as `dataset_id` when submitting a training job.
-The job detail API includes `status`, `finished_at`, and dataset metadata including
-`expires_at` and `deleted_at`. The training form refreshes these values while open.
+Leave epochs blank to run without extra arguments, or set it only if the script
+accepts `--epochs`. Click **Check startup** to queue an image build and a temporary
+GPU run. A process that exits with code zero or remains running for approximately
+30 seconds passes. The worker stops and removes the check container and discards
+its output files; captured logs remain on the job. A pass confirms startup only:
+it does not prove a batch ran or that full training will succeed. Checks can begin
+real training and execute the image's default command, including a custom
+Dockerfile's command. Worker polling and container shutdown can extend the window.
+
+Click **Submit training** after success to queue a fresh full run with the same
+saved configuration. Checks reserve GPUs through the normal worker queue and
+recover after worker restarts. You can also submit a successful check from the
+Training Jobs page. Changing the script, epochs, or mapping requires a new check.
+Each dataset belongs to one check/job; upload again for another check. Unused
+uploads and datasets from completed checks expire after 24 hours. Submitting a
+successful check retains its data until 24 hours after training ends.
+
+The upload API is `POST /api/projects/<project-id>/datasets` with multipart `file`.
+Pass its `id` as `dataset_id`, plus the relative `dataset_target`, to
+`POST /api/projects/<project-id>/training-jobs` to start a check. Omit `epochs` or
+send null for no arguments. Poll the job detail until `status` is `checked`, then
+`POST /api/projects/<project-id>/training-jobs/<job-id>/submit` to train. Failed
+checks cannot be submitted. The detail includes `startup_check`,
+`environment_validation` with check output, and dataset expiry metadata.
 
 Apply the schema before starting the updated application:
 
@@ -221,10 +242,9 @@ manual image command shares the worker's GPU reservations. `maintain_training`
 is a one-off execution/retention check; the persistent worker owns image builds.
 
 The image's default command must run the selected script with the saved arguments.
-The runner mounts the dataset read-only at `/dataset` and sets
-`GPU_JOB_DATASET_DIR=/dataset`. Scripts should read that environment variable to
-locate their inputs. A single uploaded file is available under its original
-filename; a ZIP exposes its extracted files. Outputs go to `/output`, available
+Without a dataset mapping, the runner retains the legacy read-only `/dataset`
+mount and `GPU_JOB_DATASET_DIR=/dataset`. With a mapping, that variable points to
+the mapped file or folder under `/app`. Outputs go to `/output`, available
 through `GPU_JOB_OUTPUT_DIR`, and are retained separately for each execution.
 The older `train-submit` / `gpu-run submit` commands remain standalone and do not
 update Django job records. Environment validation is a smoke check, not training

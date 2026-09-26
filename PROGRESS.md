@@ -1,5 +1,7 @@
 # Progress
 
+- Fixed container dispatch for lowercase Docker missing-container errors, with executor and worker regression coverage.
+- Verified real image build and container creation; GPU startup remains blocked by missing host NVIDIA container runtime/CDI configuration.
 - Added database queue claiming with per-job and per-GPU reservations and canonical GPU UUID resolution.
 - Added isolated snapshot image builds with durable results, cancellation, bounded restart recovery, and failure diagnostics.
 - Added a persistent worker and service configuration for automatic training, monitoring, retries, and dataset cleanup.
@@ -7,8 +9,12 @@
 - Added per-job file/ZIP dataset uploads, status and expiry display, and cleanup 24 hours after completion, failure, or cancellation.
 - Kept one persistent filename, epoch, and submit control when switching files.
 - Added Dockerfile generation, environment validation, examples, and architecture/deployment documentation.
-- Handled lowercase Docker missing-container errors with executor and worker regression coverage.
-- Added queued startup checks, explicit submission, and dataset path mapping with lifecycle regression coverage.
-- Added frontend API support for mapped datasets and submission of successful startup checks.
-- Added the training jobs dashboard and submission of completed startup checks.
-- Added a collapsible directory tree, default Python preview, dataset upload modal, and startup submission controls.
+- Added TrainingJobsPage mirroring the Projects dashboard layout (no Upload Files button) with search, selection, empty/loading/error states, and sidebar navigation between pages; backed by a new `GET /api/projects/training-jobs` list endpoint returning job metadata with project names.
+
+- Added queued startup checks with GPU reservations, bounded observation, captured output, and explicit submission after success.
+- Added separate dataset uploads and project-relative file/ZIP mounts; made epoch arguments optional.
+- Documented startup checks and dataset mappings; added lifecycle, cleanup recovery, submission gating, and mount regression coverage.
+- Applied the schema migration; verified 70 backend tests, 7 executor tests, frontend API tests, and the production frontend build.
+- Restyled the project browser as a connected directory tree with folder/file icons, folders first, and expandable branches that retain nested expansion state.
+- Moved the Dockerfile download into a collapsed Advanced section in the training form.
+- Moved dataset uploads to a compact modal with a blurred backdrop, opened from the directory panel; removed inline instructions and defaulted previews to a Python file.
