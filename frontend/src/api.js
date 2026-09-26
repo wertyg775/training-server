@@ -17,11 +17,11 @@ export function readProjectFile(projectId, path, signal) {
   return request(`/${encodeURIComponent(projectId)}/file?${new URLSearchParams({ path })}`, { signal });
 }
 
-export function submitTraining(projectId, entrypoint, epochs, datasetId) {
+export function submitTraining(projectId, entrypoint, epochs, datasetId, datasetTarget) {
   return request(`/${encodeURIComponent(projectId)}/training-jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entrypoint, epochs, ...(datasetId ? { dataset_id: datasetId } : {}) }),
+    body: JSON.stringify({ entrypoint, epochs, ...(datasetId ? { dataset_id: datasetId } : {}), ...(datasetTarget ? { dataset_target: datasetTarget } : {}) }),
   });
 }
 
@@ -46,4 +46,8 @@ export function uploadProject(name, file, signal) {
   body.append('name', name);
   body.append('file', file);
   return request('/upload', { method: 'POST', body, signal });
+}
+
+export function confirmTraining(projectId, jobId) {
+  return request(`/${encodeURIComponent(projectId)}/training-jobs/${encodeURIComponent(jobId)}/submit`, { method: 'POST' });
 }

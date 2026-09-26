@@ -105,3 +105,21 @@ test('uploads dataset as multipart and links it to a job', async () => {
   };
   assert.equal((await getTrainingJob('project-id', 'job-id', controller.signal)).status, 'finished');
 });
+
+test('checks startup with mapped data and no arguments, then submits the checked job', async () => {
+  const { confirmTraining } = await import('./api.js');
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/training-jobs');
+    assert.deepEqual(JSON.parse(options.body), {
+      entrypoint: 'train.py', epochs: null, dataset_id: 'dataset-id', dataset_target: 'data/train.csv',
+    });
+    return Response.json({ id: 'check-id', startup_check: true });
+  };
+  await submitTraining('project-id', 'train.py', null, 'dataset-id', 'data/train.csv');
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project-id/training-jobs/check-id/submit');
+    assert.equal(options.method, 'POST');
+    return Response.json({ id: 'check-id', startup_check: false, status: 'queued' });
+  };
+  assert.equal((await confirmTraining('project-id', 'check-id')).startup_check, false);
+});
