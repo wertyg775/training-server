@@ -1,106 +1,83 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getTrainingJob, submitTraining, uploadDataset } from './api.js';
+import { confirmTraining, getTrainingJob, submitTraining } from './api.js';
 
-export default function TrainingForm({ projectId, path }) {
-  const [epochs, setEpochs] = useState('1');
+export default function TrainingForm({ projectId, path, dataset, onBusyChange }) {
+  const [epochs, setEpochs] = useState('');
   const [pending, setPending] = useState(false);
-  const [result, setResult] = useState('');
   const [error, setError] = useState('');
-  const [savedJob, setSavedJob] = useState(null);
-  const [datasetFile, setDatasetFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const uploadedDataset = useRef(null);
-  const datasetInput = useRef(null);
+  const [job, setJob] = useState(null);
+  const target = dataset?.target || '';
   const inFlight = useRef(false);
   const runnable = path?.endsWith('.py');
+  const active = job && ['queued', 'building', 'running'].includes(job.status);
+  const busy = Boolean(pending || active);
+  useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
+  const configuration = JSON.stringify([projectId, path, epochs, dataset?.id, target]);
+  const checkedConfiguration = useRef('');
+  const checked = job?.startup_check && job.status === 'checked' && checkedConfiguration.current === configuration;
 
   useEffect(() => {
-    if (!savedJob) return undefined;
+    if (!active) return undefined;
     const controller = new AbortController();
     let timer;
     async function refresh() {
-      let delay = 5000;
       try {
-        const job = await getTrainingJob(projectId, savedJob.id, controller.signal);
+        const updated = await getTrainingJob(projectId, job.id, controller.signal);
         if (controller.signal.aborted) return;
-        setSavedJob(job);
-        if (!['queued', 'building', 'running'].includes(job.status)) {
-          if (!job.dataset || job.dataset.deleted_at) return;
-          delay = 60000;
-        }
+        setJob(updated);
       } catch (failure) {
-        if (!controller.signal.aborted) setError(`Could not refresh job status: ${failure.message}`);
+        if (!controller.signal.aborted) setError(`Could not refresh status: ${failure.message}`);
       }
-      if (!controller.signal.aborted) timer = setTimeout(refresh, delay);
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 2000);
     }
-    timer = setTimeout(refresh, 5000);
+    timer = setTimeout(refresh, 1000);
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [projectId, savedJob?.id]);
+  }, [projectId, job?.id, active]);
 
-  async function submit(event) {
-    event.preventDefault();
-    if (inFlight.current || !runnable) return;
-    const count = Number(epochs);
-    if (!Number.isInteger(count) || count < 1 || count > 2147483647) {
-      setError('Enter a positive whole number of epochs.');
-      return;
-    }
+  async function action(operation) {
+    if (inFlight.current) return;
     inFlight.current = true;
     setPending(true);
     setError('');
-    setResult('');
-    setSavedJob(null);
-    try {
-      if (datasetFile && (!uploadedDataset.current || new Date(uploadedDataset.current.expires_at) <= new Date())) {
-        setUploading(true);
-        uploadedDataset.current = await uploadDataset(projectId, datasetFile);
-        setUploading(false);
-      }
-      const job = await submitTraining(projectId, path, count, uploadedDataset.current?.id);
-      uploadedDataset.current = null;
-      setDatasetFile(null);
-      if (datasetInput.current) datasetInput.current.value = '';
-      setSavedJob(job);
-      setResult(`Training request saved (${job.id}).`);
-    } catch (failure) {
-      setError(failure.message);
-    } finally {
-      inFlight.current = false;
-      setUploading(false);
-      setPending(false);
+    try { await operation(); }
+    catch (failure) { setError(failure.message); }
+    finally { inFlight.current = false; setPending(false); }
+  }
+
+  async function check(event) {
+    event.preventDefault();
+    const count = epochs === '' ? null : Number(epochs);
+    if (count !== null && (!Number.isInteger(count) || count < 1 || count > 2147483647)) {
+      setError('Enter a positive whole number of epochs, or leave it blank.');
+      return;
     }
+    await action(async () => {
+      const result = await submitTraining(projectId, path, count, dataset?.id, target);
+      checkedConfiguration.current = configuration;
+      setJob(result);
+    });
   }
 
   return <>
     <div className="file-preview-header">
       <h3 title={path}>{path || 'File contents'}</h3>
-      <form id="training-request" className="training-form" onSubmit={submit} aria-label="Submit training request">
-        <label htmlFor="training-epochs">Epochs</label>
-        <input id="training-epochs" type="number" min="1" max="2147483647" step="1" required value={epochs} disabled={!runnable || pending} onChange={(event) => setEpochs(event.target.value)} />
-        <button type="submit" disabled={!runnable || pending} title={runnable ? 'Save training request' : 'Select a Python (.py) file to train'}>{uploading ? 'Uploading…' : pending ? 'Submitting…' : 'Submit'}</button>
+      <form id="training-request" className="training-form" onSubmit={check} aria-label="Check training startup">
+        <label htmlFor="training-epochs">Epochs (optional)</label>
+        <input id="training-epochs" type="number" min="1" max="2147483647" step="1" value={epochs} disabled={!runnable || busy} onChange={(event) => setEpochs(event.target.value)} />
+        <button type="submit" disabled={!runnable || busy || Boolean(dataset && !target.trim()) || Boolean(dataset && job?.dataset?.id === dataset.id)}>{pending ? 'Saving…' : 'Check startup'}</button>
+        <button type="button" disabled={!checked || busy} onClick={() => action(async () => setJob(await confirmTraining(projectId, job.id)))}>Submit training</button>
       </form>
     </div>
-    <div className="dataset-upload">
-      <label htmlFor="training-dataset">Dataset (optional)</label>
-      <input ref={datasetInput} id="training-dataset" form="training-request" type="file" disabled={pending} aria-describedby="dataset-help" onChange={(event) => {
-        setDatasetFile(event.target.files[0] || null);
-        uploadedDataset.current = null;
-      }} />
-      <p id="dataset-help">Upload a file or a ZIP of your dataset folders. Data is deleted 24 hours after training finishes, fails, or is cancelled.</p>
-    </div>
-    {result && <p className="tree-message" role="status">{result}</p>}
-    {savedJob && <div className="tree-message" aria-live="polite">
-      <p>Job status: <strong>{savedJob.status}</strong> · {savedJob.entrypoint}</p>
-      {savedJob.error && <p role="alert">{savedJob.error}</p>}
-      {savedJob.dataset && <p>{savedJob.dataset.name}: {savedJob.dataset.deleted_at
-        ? 'Dataset expired — upload it again for a new job.'
-        : savedJob.dataset.expires_at
-          ? `Scheduled for deletion after ${new Date(savedJob.dataset.expires_at).toLocaleString()}.`
-          : 'Available for training.'}</p>}
-      <p>
-      {savedJob.dockerfile_source === 'generated' ? 'Dockerfile generated. ' : 'Project Dockerfile preserved. '}
-      <a href={`/api/projects/${projectId}/training-jobs/${savedJob.id}/dockerfile`} download="Dockerfile">Download Dockerfile</a>
-      </p>
+    {job && <div className="tree-message" aria-live="polite">
+      <p>{job.startup_check ? 'Startup check' : 'Training'}: <strong>{job.status}</strong> · {job.entrypoint}</p>
+      {job.environment_validation?.message && <p>{job.environment_validation.message}</p>}
+      {job.environment_validation?.output && <pre>{job.environment_validation.output}</pre>}
+      {job.error && <p role="alert">{job.error}</p>}
+      {job.dataset?.expires_at && <p>Dataset expires {new Date(job.dataset.expires_at).toLocaleString()}.</p>}
+      <details>
+        <summary>Advanced</summary>
+        <p><a href={`/api/projects/${projectId}/training-jobs/${job.id}/dockerfile`} download="Dockerfile">Download Dockerfile</a></p>
+      </details>
     </div>}
     {error && <p className="tree-message" role="alert">{error}</p>}
   </>;
