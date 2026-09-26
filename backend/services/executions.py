@@ -1,5 +1,6 @@
 """Claim GPUs, launch saved jobs, and reconcile Docker with durable job state."""
 
+import shutil
 import subprocess
 from datetime import timedelta
 from pathlib import Path
@@ -135,6 +136,8 @@ def finish_execution(
         attempt.exit_code = exit_code
         attempt.error = error[-8000:]
         attempt.save()
+        if job.startup_check and status == "finished":
+            status = "checked"
         _finish_job(job, status, completed, error)
         return attempt
 
@@ -160,6 +163,9 @@ def queue_retry(job_id):
         ):
             raise ValueError("Only a completed job can be queued for retry.")
         hold_dataset(job)
+        if job.startup_check:
+            job.environment_validation = {}
+            job.save(update_fields=["environment_validation"])
         job.status, job.error = "queued", ""
         job.finished_at = job.cancel_requested_at = None
         job.save(
@@ -188,6 +194,19 @@ def _reconcile(attempt, executor):
     except ContainerNotFound:
         if job.cancel_requested_at:
             return finish_execution(attempt.pk)
+        if job.startup_check and job.environment_validation.get("status") in {
+            "passed",
+            "failed",
+        }:
+            shutil.rmtree(attempt.output_path, ignore_errors=True)
+            report = job.environment_validation
+            return finish_execution(
+                attempt.pk,
+                succeeded=report["status"] == "passed",
+                error=""
+                if report["status"] == "passed"
+                else report.get("output", "Startup failed."),
+            )
         if attempt.error or attempt.state == "running" or attempt.container_id:
             return finish_execution(
                 attempt.pk,
@@ -209,6 +228,16 @@ def _reconcile(attempt, executor):
                 [],
                 attempt.assigned_gpu,
                 dataset=dataset_path(job.dataset) if job.dataset_id else None,
+                **(
+                    {
+                        "dataset_target": job.dataset_target,
+                        "dataset_file": job.dataset.name
+                        if not job.dataset.name.lower().endswith(".zip")
+                        else "",
+                    }
+                    if job.dataset_id and job.dataset_target
+                    else {}
+                ),
             )
             ContainerExecution.objects.filter(pk=attempt.pk).update(
                 container_id=container
@@ -257,6 +286,46 @@ def _reconcile(attempt, executor):
     ]:
         executor.stop(container)
         state = executor.inspect(container)["State"]
+    if job.startup_check and not job.cancel_requested_at:
+        started = attempt.started_at or parse_datetime(state.get("StartedAt", ""))
+        elapsed = (
+            started
+            and started.year >= 2000
+            and timezone.now() >= started + timedelta(seconds=30)
+        )
+        exited = state["Status"] in ["exited", "dead"]
+        if exited or (
+            elapsed and state["Status"] in {"running", "paused", "restarting"}
+        ):
+            # Persist the result before cleanup so restart recovery preserves it.
+            report = job.environment_validation
+            if report.get("status") not in {"passed", "failed"}:
+                passed = state["Status"] == "running" or (
+                    state["Status"] == "exited" and state.get("ExitCode") == 0
+                )
+                report = {
+                    "status": "passed" if passed else "failed",
+                    "message": "Started successfully (observed for 30 seconds)."
+                    if not exited and passed
+                    else "Script completed successfully."
+                    if passed
+                    else "Script failed during startup.",
+                    "output": executor.captured_logs(container),
+                    "finished_at": timezone.now().isoformat(),
+                }
+                job.environment_validation = report
+                job.save(update_fields=["environment_validation"])
+            if not exited:
+                executor.stop(container)
+            executor.remove(container)
+            shutil.rmtree(attempt.output_path, ignore_errors=True)
+            return finish_execution(
+                attempt.pk,
+                succeeded=report["status"] == "passed",
+                error=""
+                if report["status"] == "passed"
+                else report["message"] + "\n" + report["output"],
+            )
     if state["Status"] in ["running", "restarting", "paused"]:
         started = parse_datetime(state.get("StartedAt", ""))
         if started is None or started.year < 2000:

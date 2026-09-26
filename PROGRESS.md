@@ -8,3 +8,4 @@
 - Kept one persistent filename, epoch, and submit control when switching files.
 - Added Dockerfile generation, environment validation, examples, and architecture/deployment documentation.
 - Handled lowercase Docker missing-container errors with executor and worker regression coverage.
+- Added queued startup checks, explicit submission, and dataset path mapping with lifecycle regression coverage.

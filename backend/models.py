@@ -86,6 +86,7 @@ class TrainingJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     class Status(models.TextChoices):
+        CHECKED = "checked", "Startup checked"
         QUEUED = "queued", "Queued"
         BUILDING = "building", "Building image"
         RUNNING = "running", "Running"
@@ -115,6 +116,8 @@ class TrainingJob(models.Model):
     requested_gpu = models.CharField(max_length=128, default="0")
     dockerfile = models.TextField(blank=True)
     dockerfile_source = models.CharField(max_length=16, blank=True)
+    startup_check = models.BooleanField(default=False)
+    dataset_target = models.CharField(max_length=1024, blank=True)
     environment_validation = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     cancel_requested_at = models.DateTimeField(null=True, blank=True)

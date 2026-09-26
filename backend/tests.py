@@ -277,7 +277,7 @@ class ProjectImportTests(TestCase):
         )
         project = Project.objects.get()
         url = f"/api/projects/{project.pk}/training-jobs"
-        for epochs in [0, -1, 1.5, True, "3", None, 2147483648]:
+        for epochs in [0, -1, 1.5, True, "3", 2147483648]:
             with self.subTest(epochs=epochs):
                 response = self.client.post(
                     url,

@@ -51,6 +51,8 @@ class DockerExecutor:
         command: list[str],
         gpu: str = "0",
         dataset: Path | None = None,
+        dataset_target: str = "",
+        dataset_file: str = "",
     ) -> str:
         if not re.fullmatch(r"job-[a-f0-9]{32}", job_id):
             raise ValueError("Invalid job ID")
@@ -68,11 +70,28 @@ class DockerExecutor:
                 raise ValueError(
                     "Dataset must be a directory with no comma in its path"
                 )
+            target = "/dataset"
+            if dataset_target:
+                from pathlib import PurePosixPath
+
+                location = PurePosixPath(dataset_target)
+                if (
+                    location.is_absolute()
+                    or ".." in location.parts
+                    or not location.parts
+                    or any(c in dataset_target for c in "\\\0,\n\r")
+                ):
+                    raise ValueError("Invalid dataset location")
+                target = "/app/" + location.as_posix()
+                if dataset_file:
+                    if Path(dataset_file).name != dataset_file:
+                        raise ValueError("Invalid dataset filename")
+                    dataset = (dataset / dataset_file).resolve(strict=True)
             dataset_args = [
                 "--mount",
-                f"type=bind,src={dataset},dst=/dataset,readonly",
+                f"type=bind,src={dataset},dst={target},readonly",
                 "--env",
-                "GPU_JOB_DATASET_DIR=/dataset",
+                f"GPU_JOB_DATASET_DIR={target}",
             ]
         return self._run(
             "create",
@@ -130,3 +149,18 @@ class DockerExecutor:
     def stop(self, container: str):
         self.inspect(container)
         self._run("stop", "--timeout", "30", container)
+
+    def captured_logs(self, container: str):
+        self.inspect(container)
+        result = subprocess.run(
+            ["docker", "logs", "--tail", "100", container],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        return (result.stdout + result.stderr)[-8000:]
+
+    def remove(self, container: str):
+        self.inspect(container)
+        self._run("rm", "--force", container)

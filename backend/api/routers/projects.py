@@ -19,14 +19,19 @@ from backend.services.projects import (
     list_ready_projects,
     read_project_file,
 )
-from backend.services.training import list_training_jobs, submit_training
+from backend.services.training import (
+    confirm_training,
+    list_training_jobs,
+    submit_training,
+)
 
 router = Router(tags=["projects"])
 
 
 class TrainingRequest(Schema):
     entrypoint: str = Field(min_length=1, max_length=1024)
-    epochs: int = Field(strict=True, ge=1, le=2147483647)
+    epochs: int | None = Field(default=None, strict=True, ge=1, le=2147483647)
+    dataset_target: str = Field(default="", max_length=1024)
     dataset_id: UUID | None = None
     requested_gpu: str = Field(
         default="0", pattern=r"^(?:[0-9]+|GPU-[a-fA-F0-9-]+)$", max_length=128
@@ -49,6 +54,8 @@ class TrainingResponse(Schema):
     arguments: list[str]
     requested_gpu: str
     dockerfile_source: str
+    startup_check: bool
+    dataset_target: str
     environment_validation: dict
     created_at: datetime
     status: str
@@ -61,6 +68,7 @@ class TrainingJobListResponse(Schema):
     id: UUID
     project_id: UUID
     project_name: str
+    startup_check: bool
     entrypoint: str
     status: str
     requested_gpu: str
@@ -176,7 +184,7 @@ def get_project_file(request, project_id: UUID, path: str):
     },
 )
 def create_training_request(request, project_id: UUID, payload: TrainingRequest):
-    """Save a training request; execution is handled separately."""
+    """Queue a startup check; a successful check must be explicitly submitted."""
     try:
         return 201, submit_training(
             project_id,
@@ -184,6 +192,8 @@ def create_training_request(request, project_id: UUID, payload: TrainingRequest)
             payload.epochs,
             payload.dataset_id,
             payload.requested_gpu,
+            payload.dataset_target,
+            startup_check=True,
         )
     except Project.DoesNotExist:
         return 404, {"detail": "Project not found."}
@@ -266,3 +276,16 @@ def import_git_project(request, payload: GitImport):
     if not payload.name.strip():
         return 422, {"detail": "Name must not be blank."}
     return _import(**payload.model_dump())
+
+
+@router.post(
+    "/{project_id}/training-jobs/{job_id}/submit",
+    response={200: TrainingResponse, 400: ErrorResponse, 404: ErrorResponse},
+)
+def submit_checked_training(request, project_id: UUID, job_id: UUID):
+    try:
+        return confirm_training(project_id, job_id)
+    except TrainingJob.DoesNotExist:
+        return 404, {"detail": "Training request not found."}
+    except ValueError as exc:
+        return 400, {"detail": str(exc)}
