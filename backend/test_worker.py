@@ -272,6 +272,54 @@ class WorkerTests(TestCase):
         self.assertEqual(next_job.status, "queued")
         self.assertEqual(ContainerExecution.objects.count(), 1)
 
+    def test_worker_reconciles_finished_execution_before_claiming_queue(self):
+        first = self.job()
+        attempt = reserve_job(first.pk, DEVICES, image=IMAGE)
+        queued = self.job()
+        self.docker.inspect.side_effect = None
+        self.docker.inspect.return_value = {
+            "Id": "b" * 64,
+            "Image": IMAGE,
+            "State": {
+                "Status": "exited",
+                "ExitCode": 0,
+                "FinishedAt": timezone.now().isoformat(),
+            },
+        }
+        with patch("backend.services.worker.poll_build") as build:
+            TrainingWorker(["0"], executor=self.docker).tick()
+        attempt.refresh_from_db()
+        first.refresh_from_db()
+        queued.refresh_from_db()
+        self.assertEqual(attempt.state, "succeeded")
+        self.assertEqual(first.status, "finished")
+        self.assertEqual(queued.status, "building")
+        build.assert_called_once()
+        self.docker.capture_project_files.assert_called_once_with(
+            "job-" + attempt.pk.hex, Path(attempt.output_path)
+        )
+
+    def test_capture_failure_retains_execution_for_retry(self):
+        job = self.job()
+        attempt = reserve_job(job.pk, DEVICES, image=IMAGE)
+        self.docker.inspect.side_effect = None
+        self.docker.inspect.return_value = {
+            "Id": "b" * 64,
+            "Image": IMAGE,
+            "State": {"Status": "exited", "ExitCode": 0},
+        }
+        self.docker.capture_project_files.side_effect = OSError("copy failed")
+        with self.assertRaisesRegex(OSError, "copy failed"):
+            reconcile_execution(attempt.pk, self.docker)
+        attempt.refresh_from_db()
+        job.refresh_from_db()
+        self.assertEqual(attempt.state, "starting")
+        self.assertEqual(job.status, "running")
+        self.docker.capture_project_files.side_effect = None
+        reconcile_execution(attempt.pk, self.docker)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.state, "succeeded")
+
     def test_singleton_worker_command_and_once(self):
         with file_lock(self.root / "worker" / "worker.lock"):
             with self.assertRaisesMessage(CommandError, "already running"):

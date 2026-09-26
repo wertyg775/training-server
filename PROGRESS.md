@@ -1,5 +1,10 @@
 # Progress
 
+- Captured new and changed project files from completed training containers into each run's Outputs folder.
+- Added an Outputs page that groups saved files by run, browses nested folders, and downloads files without exposing storage paths.
+- Added an Executions dashboard with project and job context, search, selection, and navigation, backed by an execution list API.
+- Added a Honcho Procfile and uv dev dependency to start the backend, frontend, and training worker together.
+- Removed the redundant maintenance command and verified the worker reconciles executions before claiming jobs and cleans up expired datasets.
 - Fixed container dispatch for lowercase Docker missing-container errors, with executor and worker regression coverage.
 - Verified real image build and container creation; GPU startup remains blocked by missing host NVIDIA container runtime/CDI configuration.
 - Added database queue claiming with per-job and per-GPU reservations and canonical GPU UUID resolution.

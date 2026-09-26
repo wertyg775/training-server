@@ -25,5 +25,6 @@ include = ["training_server*", "backend*"]
 
 [dependency-groups]
 dev = [
+    "honcho>=2.0.0",
     "pre-commit>=4.6.2",
 ]
