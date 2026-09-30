@@ -12,9 +12,8 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from backend.models import ContainerExecution, Project, TrainingJob
-from backend.services.dockerfiles import prepare_dockerfile
 from backend.services.projects import list_project_files, list_ready_projects
-from backend.services.training import list_training_jobs
+from backend.services.training import list_training_jobs, prepare_dockerfile
 
 UV_PROJECT_FILES = {
     "pyproject.toml": '[project]\nname="training"\nversion="0.1.0"\nrequires-python=">=3.12"\ndependencies=[]\n',
@@ -26,10 +25,10 @@ class DockerfilePreparationTests(SimpleTestCase):
     def test_does_not_follow_a_dockerfile_symlink(self):
         with (
             patch(
-                "backend.services.dockerfiles.list_project_files",
+                "backend.services.training.list_project_files",
                 return_value={"entries": [{"name": "Dockerfile", "type": "symlink"}]},
             ),
-            patch("backend.services.dockerfiles.read_project_file") as read,
+            patch("backend.services.training.read_project_file") as read,
             self.assertRaisesMessage(ValueError, "regular file"),
         ):
             prepare_dockerfile("project", "train.py", [])

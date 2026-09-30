@@ -12,8 +12,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from backend.models import ContainerExecution, Dataset, Project, TrainingJob
-from backend.services.datasets import cleanup_datasets, dataset_path, upload_dataset
 from backend.services.executions import cancel_job, reconcile_execution, start_job
+from backend.services.projects import cleanup_datasets, dataset_path, upload_dataset
 from backend.services.training import submit_training
 from training_server.executor import ContainerNotFound
 
@@ -160,7 +160,7 @@ class DatasetTests(TestCase):
                 )
                 self.assertEqual(cleanup_datasets(), 0)
                 with patch(
-                    "backend.services.datasets.timezone.now", return_value=expiry
+                    "backend.services.projects.timezone.now", return_value=expiry
                 ):
                     self.assertEqual(cleanup_datasets(), 1)
                     self.assertEqual(cleanup_datasets(), 0)
@@ -219,7 +219,7 @@ class DatasetTests(TestCase):
         )
         with (
             patch(
-                "backend.services.datasets.shutil.rmtree", side_effect=OSError("busy")
+                "backend.services.projects.shutil.rmtree", side_effect=OSError("busy")
             ),
             self.assertRaises(OSError),
         ):

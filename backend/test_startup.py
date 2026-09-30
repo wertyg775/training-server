@@ -9,8 +9,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from backend.models import Dataset, Project, TrainingJob
-from backend.services.datasets import dataset_path
 from backend.services.executions import reconcile_execution, reserve_job
+from backend.services.projects import dataset_path
 from backend.services.training import confirm_training, submit_training
 from training_server.executor import ContainerNotFound, DockerExecutor
 

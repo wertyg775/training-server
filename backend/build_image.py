@@ -32,7 +32,7 @@ def stop_process(process):
 def run_build(directory, timeout, stop=None):
     from django.utils import timezone
 
-    from backend.services.environment_validation import export_snapshot
+    from backend.services.projects import export_snapshot
 
     stop = stop or threading.Event()
     request = json.loads((directory / "request.json").read_text())

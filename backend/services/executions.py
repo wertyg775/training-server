@@ -1,19 +1,27 @@
-"""Claim GPUs, launch saved jobs, and reconcile Docker with durable job state."""
+"""Build, run, and reconcile training executions with durable job state."""
 
+import fcntl
+import json
+import logging
+import re
 import shutil
 import subprocess
+import sys
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, close_old_connections, transaction
 from django.db.models import F
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from backend.build_image import write_json
 from backend.models import ContainerExecution, Dataset, TrainingJob
-from backend.services.datasets import dataset_path
-from backend.services.worker_locks import attempt_lock
+from backend.services.projects import cleanup_datasets, dataset_path
 from training_server.executor import ContainerNotFound, DockerExecutor
 
 ACTIVE = ["building", "starting", "running"]
@@ -388,3 +396,226 @@ def cancel_job(job_id, executor=None):
     # filesystem access occurs while holding the job's database lock.
     if attempt.state != "building":
         reconcile_execution(attempt.pk, executor)
+
+
+# Host operation locks
+
+
+@contextmanager
+def file_lock(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def attempt_directory(execution_id):
+    return Path(settings.TRAINING_WORK_ROOT).resolve() / str(execution_id)
+
+
+def attempt_lock(execution_id):
+    return file_lock(attempt_directory(execution_id) / "operation.lock")
+
+
+# Image build coordination
+
+
+def build_directory(attempt):
+    return attempt_directory(attempt.pk) / str(attempt.build_token)
+
+
+def poll_build(execution_id):
+    """Return a new builder process when launched, otherwise None."""
+    with attempt_lock(execution_id) as acquired:
+        if not acquired:
+            return None
+        attempt = ContainerExecution.objects.select_related(
+            "training_job__project"
+        ).get(pk=execution_id)
+        if attempt.state != "building":
+            return None
+        directory = build_directory(attempt) if attempt.build_token else None
+        # A builder inherits this lock from its launching worker. It remains held
+        # if that worker exits, preventing duplicate builders on restart.
+        lock_path = attempt_directory(attempt.pk) / "build.lock"
+        with lock_path.open("a+") as build_lock:
+            try:
+                fcntl.flock(build_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if attempt.training_job.cancel_requested_at and directory:
+                    (directory / "cancel").touch()
+                return None
+            if directory and (directory / "result.json").exists():
+                try:
+                    result = json.loads((directory / "result.json").read_text())
+                    completed = parse_datetime(result["finished_at"])
+                    if completed is None or not isinstance(result["success"], bool):
+                        raise ValueError("Invalid build completion metadata.")
+                    if result["success"] and not re.fullmatch(
+                        r"sha256:[a-f0-9]{64}", result["image"]
+                    ):
+                        raise ValueError("Invalid image digest.")
+                except (ValueError, KeyError, TypeError) as exc:
+                    finish_execution(
+                        attempt.pk, error=f"Could not recover image build result: {exc}"
+                    )
+                    return None
+                ContainerExecution.objects.filter(pk=attempt.pk).update(
+                    build_log=result.get("log", "")[-8000:],
+                    build_finished_at=completed,
+                )
+                if attempt.training_job.cancel_requested_at or not result["success"]:
+                    error = result.get("error", "")
+                    if not result["success"] and result.get("log"):
+                        error += "\n" + result["log"]
+                    finish_execution(attempt.pk, completed=completed, error=error)
+                    return None
+                with transaction.atomic():
+                    job = TrainingJob.objects.select_for_update().get(
+                        pk=attempt.training_job_id
+                    )
+                    if job.cancel_requested_at:
+                        finish_execution(attempt.pk)
+                    else:
+                        ContainerExecution.objects.filter(
+                            pk=attempt.pk, state="building"
+                        ).update(state="starting", image_digest=result["image"])
+                        job.status = "running"
+                        job.save(update_fields=["status"])
+                return None
+            if attempt.training_job.cancel_requested_at:
+                finish_execution(attempt.pk)
+                return None
+            if attempt.build_attempts >= 3:
+                finish_execution(
+                    attempt.pk,
+                    error="Image builder was interrupted three times. Retry the job to build again.",
+                )
+                return None
+            if not attempt.training_job.dockerfile:
+                finish_execution(
+                    attempt.pk,
+                    error="This job has no saved Dockerfile. Submit a new job.",
+                )
+                return None
+            # No living builder or complete result: restart from the immutable
+            # snapshot with a new token so stale files can never become this result.
+            if directory and (directory / "context").exists():
+                shutil.rmtree(directory / "context")
+            attempt.build_token = uuid.uuid4()
+            attempt.build_attempts += 1
+            attempt.build_started_at = timezone.now()
+            attempt.save(
+                update_fields=["build_token", "build_attempts", "build_started_at"]
+            )
+            directory = build_directory(attempt)
+            directory.mkdir(parents=True)
+            project = attempt.training_job.project
+            write_json(
+                directory / "request.json",
+                {
+                    "project": {
+                        "storage_path": project.storage_path,
+                        "resolved_commit": project.resolved_commit,
+                    },
+                    "dockerfile": attempt.training_job.dockerfile,
+                    "tag": f"training-job:{attempt.pk.hex}-{attempt.build_token.hex}",
+                },
+            )
+            try:
+                return subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "backend.build_image",
+                        str(directory),
+                        "--timeout",
+                        str(settings.TRAINING_BUILD_TIMEOUT),
+                        "--lock-fd",
+                        str(build_lock.fileno()),
+                    ],
+                    cwd=settings.BASE_DIR,
+                    pass_fds=(build_lock.fileno(),),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                finish_execution(
+                    attempt.pk, error=f"Could not start image builder: {exc}"
+                )
+                return None
+            # Closing the parent's FD does not unlock the child's inherited FD.
+
+
+# Queue worker
+
+logger = logging.getLogger(__name__)
+
+
+class TrainingWorker:
+    def __init__(self, gpus, *, executor=None, cleanup_interval=60):
+        self.executor = executor or DockerExecutor()
+        self.devices = self.executor.gpu_devices()
+        self.gpus = {resolve_gpu(gpu, self.devices) for gpu in gpus}
+        if not self.gpus:
+            raise ValueError("Configure at least one GPU for the worker.")
+        self.cleanup_interval = cleanup_interval
+        self.next_cleanup = 0
+        self.children = []
+
+    def tick(self, stop=None):
+        close_old_connections()
+        self.children = [child for child in self.children if child.poll() is None]
+        # Reconcile existing work before claiming: an exited container releases its
+        # reservation here, while a Docker outage keeps the reservation intact.
+        for attempt in ContainerExecution.objects.filter(state__in=ACTIVE).iterator():
+            if stop is not None and stop.is_set():
+                return
+            try:
+                if attempt.state == "building":
+                    child = poll_build(attempt.pk)
+                    if child is not None:
+                        self.children.append(child)
+                else:
+                    reconcile_execution(attempt.pk, self.executor)
+            except (OSError, ValueError, subprocess.SubprocessError, DatabaseError):
+                logger.exception(
+                    "Could not advance execution %s; retaining its reservation",
+                    attempt.pk,
+                )
+        for job in (
+            TrainingJob.objects.filter(status="queued")
+            .order_by("created_at", "id")
+            .iterator()
+        ):
+            if stop is not None and stop.is_set():
+                break
+            try:
+                gpu = resolve_gpu(job.requested_gpu, self.devices)
+                if gpu not in self.gpus:
+                    continue
+                attempt = reserve_job(job.pk, self.devices, queued_only=True)
+                if attempt:
+                    child = poll_build(attempt.pk)
+                    if child is not None:
+                        self.children.append(child)
+            except GPUUnavailable:
+                continue
+            except ValueError as exc:
+                fail_queued_job(job.pk, exc)
+            except (OSError, subprocess.SubprocessError, DatabaseError):
+                logger.exception("Could not claim job %s; will try again", job.pk)
+        if time.monotonic() >= self.next_cleanup:
+            try:
+                cleanup_datasets()
+            except (OSError, ValueError, DatabaseError):
+                logger.exception("Dataset cleanup failed; will retry on the next sweep")
+            self.next_cleanup = time.monotonic() + self.cleanup_interval

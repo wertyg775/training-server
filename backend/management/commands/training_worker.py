@@ -10,8 +10,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, close_old_connections
 
-from backend.services.worker import TrainingWorker
-from backend.services.worker_locks import file_lock
+from backend.services.executions import TrainingWorker, file_lock
 
 logger = logging.getLogger(__name__)
 

@@ -15,16 +15,18 @@ from django.utils import timezone
 
 from backend.build_image import run_build, write_json
 from backend.models import ContainerExecution, Project, TrainingJob
-from backend.services.builds import build_directory, poll_build
 from backend.services.executions import (
     GPUUnavailable,
+    TrainingWorker,
+    attempt_directory,
+    build_directory,
     cancel_job,
+    file_lock,
+    poll_build,
     queue_retry,
     reconcile_execution,
     reserve_job,
 )
-from backend.services.worker import TrainingWorker
-from backend.services.worker_locks import attempt_directory, file_lock
 from training_server.executor import LABEL, ContainerNotFound, DockerExecutor
 
 DEVICES = {
@@ -109,7 +111,7 @@ class WorkerTests(TestCase):
 
     def test_worker_claims_oldest_per_gpu_and_leaves_busy_queue(self):
         jobs = [self.job(), self.job(), self.job("1")]
-        with patch("backend.services.worker.poll_build") as build:
+        with patch("backend.services.executions.poll_build") as build:
             worker = TrainingWorker(["0", "1"], executor=self.docker)
             worker.tick()
         self.assertEqual(
@@ -127,7 +129,7 @@ class WorkerTests(TestCase):
 
     def test_builder_launch_persists_identity_and_uses_inherited_lock(self):
         attempt = reserve_job(self.job().pk, DEVICES)
-        with patch("backend.services.builds.subprocess.Popen") as launch:
+        with patch("backend.services.executions.subprocess.Popen") as launch:
             poll_build(attempt.pk)
         attempt.refresh_from_db()
         self.assertEqual(attempt.build_attempts, 1)
@@ -142,12 +144,12 @@ class WorkerTests(TestCase):
 
     def test_live_builder_survives_worker_restart_without_duplicate(self):
         attempt = reserve_job(self.job().pk, DEVICES)
-        with patch("backend.services.builds.subprocess.Popen"):
+        with patch("backend.services.executions.subprocess.Popen"):
             poll_build(attempt.pk)
         attempt.refresh_from_db()
         with (attempt_directory(attempt.pk) / "build.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with patch("backend.services.builds.subprocess.Popen") as launch:
+            with patch("backend.services.executions.subprocess.Popen") as launch:
                 restarted = TrainingWorker(["0"], executor=self.docker)
                 restarted.tick()
                 launch.assert_not_called()
@@ -155,7 +157,7 @@ class WorkerTests(TestCase):
 
     def test_completed_build_is_recovered_and_starts_existing_attempt(self):
         attempt = reserve_job(self.job().pk, DEVICES)
-        with patch("backend.services.builds.subprocess.Popen"):
+        with patch("backend.services.executions.subprocess.Popen"):
             poll_build(attempt.pk)
         self.result(attempt)
         poll_build(attempt.pk)
@@ -214,7 +216,7 @@ class WorkerTests(TestCase):
     def test_build_failure_releases_gpu_and_retry_requeues(self):
         job = self.job()
         attempt = reserve_job(job.pk, DEVICES)
-        with patch("backend.services.builds.subprocess.Popen"):
+        with patch("backend.services.executions.subprocess.Popen"):
             poll_build(attempt.pk)
         self.result(attempt, success=False)
         poll_build(attempt.pk)
@@ -229,7 +231,7 @@ class WorkerTests(TestCase):
         job = self.job()
         attempt = reserve_job(job.pk, DEVICES)
         tokens = []
-        with patch("backend.services.builds.subprocess.Popen") as launch:
+        with patch("backend.services.executions.subprocess.Popen") as launch:
             for _ in range(3):
                 poll_build(attempt.pk)
                 attempt.refresh_from_db()
@@ -244,7 +246,7 @@ class WorkerTests(TestCase):
     def test_cancellation_signals_live_builder_and_never_starts_training(self):
         job = self.job()
         attempt = reserve_job(job.pk, DEVICES)
-        with patch("backend.services.builds.subprocess.Popen"):
+        with patch("backend.services.executions.subprocess.Popen"):
             poll_build(attempt.pk)
         attempt.refresh_from_db()
         with (attempt_directory(attempt.pk) / "build.lock").open("a+") as lock:
@@ -266,7 +268,7 @@ class WorkerTests(TestCase):
         reserve_job(job.pk, DEVICES, image=IMAGE)
         next_job = self.job()
         self.docker.inspect.side_effect = subprocess.TimeoutExpired("docker", 60)
-        with self.assertLogs("backend.services.worker", level="ERROR"):
+        with self.assertLogs("backend.services.executions", level="ERROR"):
             TrainingWorker(["0"], executor=self.docker).tick()
         next_job.refresh_from_db()
         self.assertEqual(next_job.status, "queued")
@@ -286,7 +288,7 @@ class WorkerTests(TestCase):
                 "FinishedAt": timezone.now().isoformat(),
             },
         }
-        with patch("backend.services.worker.poll_build") as build:
+        with patch("backend.services.executions.poll_build") as build:
             TrainingWorker(["0"], executor=self.docker).tick()
         attempt.refresh_from_db()
         first.refresh_from_db()
@@ -331,7 +333,7 @@ class WorkerTests(TestCase):
             worker.return_value.tick.assert_called_once()
 
     def test_empty_queue_still_cleans_up(self):
-        with patch("backend.services.worker.cleanup_datasets") as cleanup:
+        with patch("backend.services.executions.cleanup_datasets") as cleanup:
             worker = TrainingWorker(["0"], executor=self.docker)
             worker.tick()
             worker.tick()
@@ -361,7 +363,7 @@ class WorkerTests(TestCase):
             return process
 
         with (
-            patch("backend.services.environment_validation.export_snapshot") as export,
+            patch("backend.services.projects.export_snapshot") as export,
             patch("backend.build_image.subprocess.Popen", side_effect=launch),
         ):
             result = run_build(directory, 10)
@@ -390,7 +392,7 @@ class WorkerTests(TestCase):
                     return process
 
                 with (
-                    patch("backend.services.environment_validation.export_snapshot"),
+                    patch("backend.services.projects.export_snapshot"),
                     patch("backend.build_image.subprocess.Popen", side_effect=launch),
                 ):
                     result = run_build(directory, -1)
@@ -422,7 +424,7 @@ class WorkerTests(TestCase):
             )
 
         with patch(
-            "backend.services.builds.subprocess.Popen", side_effect=launch
+            "backend.services.executions.subprocess.Popen", side_effect=launch
         ) as mocked:
             child = poll_build(attempt.pk)
             try:
@@ -453,7 +455,7 @@ class WorkerTests(TestCase):
             {"project": {}, "dockerfile": "FROM example", "tag": "test"},
         )
         with patch(
-            "backend.services.environment_validation.export_snapshot",
+            "backend.services.projects.export_snapshot",
             side_effect=ValueError("Unsafe snapshot"),
         ):
             result = run_build(directory, 10)
@@ -465,7 +467,7 @@ class WorkerTests(TestCase):
         job = self.job()
         stop = threading.Event()
         stop.set()
-        with patch("backend.services.worker.poll_build") as build:
+        with patch("backend.services.executions.poll_build") as build:
             TrainingWorker(["0"], executor=self.docker).tick(stop=stop)
             build.assert_not_called()
         job.refresh_from_db()
@@ -497,7 +499,9 @@ class WorkerTransactionTests(TransactionTestCase):
                 self.assertFalse(connection.in_atomic_block)
                 return Mock()
 
-            with patch("backend.services.builds.subprocess.Popen", side_effect=launch):
+            with patch(
+                "backend.services.executions.subprocess.Popen", side_effect=launch
+            ):
                 poll_build(attempt.pk)
             attempt.refresh_from_db()
             write_json(

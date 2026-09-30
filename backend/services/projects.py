@@ -1,18 +1,22 @@
-"""Import immutable project snapshots into configured local storage."""
+"""Import and browse project snapshots and manage their datasets."""
 
 import os
 import shutil
 import stat
 import subprocess
+import tarfile
 import tempfile
 import zipfile
+from datetime import timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
 
-from backend.models import Project
+from backend.models import Dataset, Project
 
 
 def list_projects():
@@ -283,3 +287,172 @@ def import_project(*, name, upload=None, repository_url=""):
         )
         project.save(update_fields=["status", "error"])
         raise ImportFailure(project) from exc
+
+
+# Project datasets
+
+
+def dataset_path(dataset):
+    return Path(settings.DATASET_STORAGE_ROOT).resolve() / str(dataset.pk)
+
+
+def upload_dataset(project_id, upload):
+    project = Project.objects.get(pk=project_id)
+    if project.status != Project.Status.READY:
+        raise ProjectNotReady("Project is not ready.")
+    name = upload.name
+    if (
+        not name
+        or len(name) > 255
+        or name in {".", ".."}
+        or any(c in name for c in "/\\\0")
+    ):
+        raise ValueError("Supply a valid dataset filename.")
+    dataset = Dataset(
+        project=project, name=name, expires_at=timezone.now() + timedelta(days=1)
+    )
+    destination = dataset_path(dataset)
+    destination.mkdir(parents=True, exist_ok=False)
+    try:
+        # Keep the temporary archive outside the payload directory.
+        with tempfile.TemporaryFile() as incoming:
+            for chunk in upload.chunks():
+                dataset.size_bytes += len(chunk)
+                if dataset.size_bytes > settings.DATASET_UPLOAD_MAX_BYTES:
+                    raise ValueError("Dataset exceeds the upload size limit.")
+                incoming.write(chunk)
+            if not dataset.size_bytes:
+                raise ValueError("Dataset is empty.")
+            incoming.seek(0)
+            if name.lower().endswith(".zip"):
+                with zipfile.ZipFile(incoming) as archive:
+                    if len(archive.infolist()) > settings.DATASET_MAX_FILES:
+                        raise ValueError("Dataset contains too many files.")
+                    total = 0
+                    for entry in archive.infolist():
+                        path = PurePosixPath(entry.filename)
+                        kind = stat.S_IFMT(entry.external_attr >> 16)
+                        if (
+                            not path.parts
+                            or path.is_absolute()
+                            or ".." in path.parts
+                            or "\\" in entry.filename
+                            or "\0" in entry.filename
+                            or kind not in (0, stat.S_IFREG, stat.S_IFDIR)
+                        ):
+                            raise ValueError(
+                                "Dataset contains an unsafe path or special file."
+                            )
+                        target = destination.joinpath(*path.parts)
+                        if entry.is_dir():
+                            target.mkdir(parents=True, exist_ok=True)
+                            continue
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with archive.open(entry) as source, target.open("xb") as output:
+                            while chunk := source.read(1024 * 1024):
+                                total += len(chunk)
+                                if total > settings.DATASET_EXTRACT_MAX_BYTES:
+                                    raise ValueError(
+                                        "Extracted dataset exceeds the storage size limit."
+                                    )
+                                output.write(chunk)
+            else:
+                with (destination / name).open("xb") as output:
+                    shutil.copyfileobj(incoming, output)
+        dataset.expires_at = timezone.now() + timedelta(days=1)
+        dataset.full_clean()
+        dataset.save()
+        return dataset
+    except Exception as exc:
+        shutil.rmtree(destination)
+        if isinstance(
+            exc, (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError)
+        ):
+            raise ValueError(
+                "Dataset could not be stored; use a regular file or valid unencrypted ZIP."
+            ) from exc
+        raise
+
+
+def cleanup_datasets():
+    """Lock against submission/retry; failed deletions remain eligible for retry."""
+    deleted = 0
+    for pk in Dataset.objects.filter(
+        deleted_at__isnull=True, expires_at__lte=timezone.now()
+    ).values_list("pk", flat=True):
+        with transaction.atomic():
+            dataset = Dataset.objects.select_for_update().get(pk=pk)
+            if (
+                dataset.deleted_at
+                or not dataset.expires_at
+                or dataset.expires_at > timezone.now()
+            ):
+                continue
+            if Dataset.objects.filter(
+                pk=pk, training_job__status__in=["queued", "building", "running"]
+            ).exists():
+                continue
+            destination = dataset_path(dataset)
+            if destination.is_symlink():
+                raise ValueError("Dataset directory must not be a symbolic link.")
+            if destination.exists():
+                shutil.rmtree(destination)
+            dataset.deleted_at = timezone.now()
+            dataset.save(update_fields=["deleted_at"])
+            deleted += 1
+    return deleted
+
+
+# Immutable snapshot export
+
+
+def export_snapshot(project, destination):
+    """Materialize only regular committed files; never use the mutable worktree."""
+    with tempfile.TemporaryDirectory(prefix="training-archive-") as temporary:
+        archive = Path(temporary) / "snapshot.tar"
+        _git(
+            project.storage_path,
+            "archive",
+            "--format=tar",
+            f"--output={archive}",
+            project.resolved_commit,
+        )
+        total = 0
+        with tarfile.open(archive) as source:
+            for count, member in enumerate(source, start=1):
+                path = PurePosixPath(member.name)
+                if path.is_absolute() or ".." in path.parts or "\\" in member.name:
+                    raise ValueError("Snapshot contains an unsafe build-context path.")
+                if any(
+                    part in {".git", ".venv", "venv", "__pycache__"}
+                    for part in path.parts
+                ):
+                    continue
+                if path.name == ".env" or path.name.startswith(".env."):
+                    continue
+                if count > settings.PROJECT_UPLOAD_MAX_FILES:
+                    raise ValueError("Build context contains too many entries.")
+                if member.isdir():
+                    continue
+                if not member.isfile():
+                    raise ValueError(
+                        "Build context must not contain symlinks or special files."
+                    )
+                total += member.size
+                if total > settings.PROJECT_EXTRACT_MAX_BYTES:
+                    raise ValueError(
+                        "Build context exceeds the project storage size limit."
+                    )
+                target = destination.joinpath(*path.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with (
+                    source.extractfile(member) as incoming,
+                    target.open("xb") as output,
+                ):
+                    shutil.copyfileobj(incoming, output)
+                target.chmod(0o755 if member.mode & 0o111 else 0o644)
+    submodules = _git(project.storage_path, "ls-tree", "-r", project.resolved_commit)
+    if any(line.startswith("160000 ") for line in submodules.splitlines()):
+        raise ValueError(
+            "Build context contains submodules; import their files explicitly."
+        )

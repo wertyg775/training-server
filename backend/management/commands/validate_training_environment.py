@@ -6,7 +6,7 @@ from uuid import UUID
 from django.core.management.base import BaseCommand, CommandError
 
 from backend.models import TrainingJob
-from backend.services.environment_validation import validate_environment
+from backend.services.training import validate_environment
 
 
 class Command(BaseCommand):

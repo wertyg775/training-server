@@ -11,7 +11,6 @@ from ninja.files import UploadedFile
 from pydantic import Field
 
 from backend.models import ContainerExecution, Project, TrainingJob
-from backend.services.datasets import upload_dataset
 from backend.services.executions import list_executions
 from backend.services.outputs import list_output_runs, open_output_file
 from backend.services.projects import (
@@ -22,6 +21,7 @@ from backend.services.projects import (
     list_projects,
     list_ready_projects,
     read_project_file,
+    upload_dataset,
 )
 from backend.services.training import (
     confirm_training,

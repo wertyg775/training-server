@@ -13,13 +13,13 @@ from unittest.mock import patch
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 
-from backend.services.dockerfiles import prepare_dockerfile, validate_uv_project
-from backend.services.environment_validation import (
-    export_snapshot,
+from backend.services.projects import export_snapshot, import_project
+from backend.services.training import (
+    prepare_dockerfile,
+    submit_training,
     validate_environment,
+    validate_uv_project,
 )
-from backend.services.projects import import_project
-from backend.services.training import submit_training
 from backend.tests import UV_PROJECT_FILES
 
 
@@ -79,13 +79,13 @@ class ProjectMetadataTests(SimpleTestCase):
         files = {**UV_PROJECT_FILES, ".python-version": "3.12\n"}
         with (
             patch(
-                "backend.services.dockerfiles.list_project_files",
+                "backend.services.training.list_project_files",
                 return_value={
                     "entries": [{"name": name, "type": "file"} for name in files]
                 },
             ),
             patch(
-                "backend.services.dockerfiles.read_project_file",
+                "backend.services.training.read_project_file",
                 side_effect=lambda project, name: {"content": files[name]},
             ),
         ):
@@ -168,7 +168,7 @@ class EnvironmentValidationTests(TestCase):
 
                 with (
                     patch(
-                        "backend.services.environment_validation._git",
+                        "backend.services.projects._git",
                         side_effect=archive,
                     ),
                     self.assertRaises(ValueError),
@@ -194,7 +194,7 @@ class EnvironmentValidationTests(TestCase):
 
         context = self.root / "context"
         context.mkdir()
-        with patch("backend.services.environment_validation._git", side_effect=archive):
+        with patch("backend.services.projects._git", side_effect=archive):
             export_snapshot(job.project, context)
         self.assertEqual((context / "script.sh").stat().st_mode & 0o7777, 0o755)
 
@@ -202,7 +202,7 @@ class EnvironmentValidationTests(TestCase):
         job = self.create_job()
         with (
             patch("subprocess.run", side_effect=self.fake_docker) as docker,
-            patch("backend.services.environment_validation.export_snapshot"),
+            patch("backend.services.training.export_snapshot"),
         ):
             report = validate_environment(job, imports=["numpy"], check_cuda=True)
         self.assertEqual(report["status"], "passed")
@@ -230,7 +230,7 @@ class EnvironmentValidationTests(TestCase):
                 arguments, 1, stdout="", stderr="permission denied"
             )
 
-        with patch("backend.services.environment_validation.export_snapshot") as export:
+        with patch("backend.services.training.export_snapshot") as export:
             report = validate_environment(job, runner=denied)
         self.assertEqual(report["status"], "failed")
         self.assertIn("permission denied", report["error"])
@@ -248,7 +248,7 @@ class EnvironmentValidationTests(TestCase):
                 )
             return self.fake_docker(arguments, **kwargs)
 
-        with patch("backend.services.environment_validation.export_snapshot"):
+        with patch("backend.services.training.export_snapshot"):
             report = validate_environment(job, runner=failure)
         self.assertEqual(report["status"], "failed")
         self.assertEqual(report["steps"], ["Docker access"])
@@ -264,7 +264,7 @@ class EnvironmentValidationTests(TestCase):
                 raise subprocess.TimeoutExpired(arguments, 1)
             return self.fake_docker(arguments, **kwargs)
 
-        with patch("backend.services.environment_validation.export_snapshot"):
+        with patch("backend.services.training.export_snapshot"):
             report = validate_environment(job, runner=timeout, timeout=1)
         self.assertEqual(report["status"], "failed")
         self.assertIn("timed out", report["error"])
